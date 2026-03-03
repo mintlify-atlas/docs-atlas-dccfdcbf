@@ -194,6 +194,71 @@ const mainSchema = defineMainSchema({
 });
 ```
 
+## defineBaseConfig
+
+Helper for defining base configuration with type safety.
+
+### Import
+
+```ts
+import { defineBaseConfig } from "@zayne-labs/callapi/utils";
+```
+
+### Usage
+
+```ts
+import { defineBaseConfig } from "@zayne-labs/callapi/utils";
+
+const baseConfig = defineBaseConfig({
+  baseURL: "https://api.example.com",
+  retryAttempts: 3,
+  timeout: 5000,
+  onError: ({ error }) => {
+    console.error("API Error:", error);
+  },
+});
+
+const api = createFetchClient(baseConfig);
+```
+
+You can also use it with a function for dynamic configuration:
+
+```ts
+const baseConfig = defineBaseConfig((context) => ({
+  baseURL: "https://api.example.com",
+  headers: {
+    "X-Request-ID": context.requestId,
+  },
+}));
+```
+
+## defineInstanceConfig
+
+Helper for defining instance-level configuration with type safety.
+
+### Import
+
+```ts
+import { defineInstanceConfig } from "@zayne-labs/callapi/utils";
+```
+
+### Usage
+
+```ts
+import { defineInstanceConfig } from "@zayne-labs/callapi/utils";
+
+const instanceConfig = defineInstanceConfig({
+  retryAttempts: 5,
+  dedupeStrategy: "defer",
+  onSuccess: ({ data }) => {
+    console.log("Request successful:", data);
+  },
+});
+
+// Use when making requests
+const { data } = await api("/users", instanceConfig);
+```
+
 ## Type Safety
 
 The `defineSchema` utility provides deep type safety:
@@ -219,6 +284,5 @@ const { data } = await api("GET /users/123/posts/456");
 
 ## See Also
 
-- [Schema Validation](/api/config/schema) - Learn about schema configuration options
-- [Type Safety](/guides/type-safety) - Understanding CallApi's type system
-- [Validation](/guides/validation) - Working with request/response validation
+- [Schema Validation](/advanced/schema-validation) - Learn about schema validation
+- [Configuration](/advanced/configuration) - Understanding CallApi's configuration
