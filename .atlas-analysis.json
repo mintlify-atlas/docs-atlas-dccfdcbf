@@ -1,0 +1,140 @@
+{
+  "projectType": "sdk-library",
+  "projectName": "CallApi",
+  "projectDescription": "A lightweight, type-safe fetch wrapper with essential features like retries, interceptors, request deduplication, and schema validation.",
+  "theme": "palm",
+  "primaryColor": "#EFBA5F",
+  "lightColor": "#F5D89E",
+  "darkColor": "#C89A3D",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Getting Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "installation"
+            ]
+          },
+          {
+            "group": "Core Features",
+            "pages": [
+              "features/error-handling",
+              "features/request-deduplication",
+              "features/retries-and-timeout",
+              "features/url-helpers",
+              "features/authorization",
+              "features/response-parsing"
+            ]
+          },
+          {
+            "group": "Advanced",
+            "pages": [
+              "advanced/schema-validation",
+              "advanced/hooks",
+              "advanced/middlewares",
+              "advanced/plugins",
+              "advanced/configuration"
+            ]
+          },
+          {
+            "group": "Integrations",
+            "pages": [
+              "integrations/react-query",
+              "integrations/tanstack"
+            ]
+          },
+          {
+            "group": "Resources",
+            "pages": [
+              "resources/comparisons",
+              "resources/migration-guide",
+              "resources/faq"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Core API",
+            "pages": [
+              "api/call-api",
+              "api/create-fetch-client",
+              "api/create-fetch-client-with-context"
+            ]
+          },
+          {
+            "group": "Configuration",
+            "pages": [
+              "api/config/base-config",
+              "api/config/extra-options",
+              "api/config/request-options"
+            ]
+          },
+          {
+            "group": "Types",
+            "pages": [
+              "api/types/call-api-result",
+              "api/types/hooks",
+              "api/types/plugins",
+              "api/types/middlewares"
+            ]
+          },
+          {
+            "group": "Utilities",
+            "pages": [
+              "api/utils/define-schema",
+              "api/utils/define-plugin",
+              "api/utils/body-helpers",
+              "api/utils/error-helpers"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Plugins",
+        "groups": [
+          {
+            "group": "Official Plugins",
+            "pages": [
+              "plugins/logger",
+              "plugins/custom-plugins"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Request Deduplication - Automatically eliminates duplicate requests and prevents race conditions",
+    "Smart Response Parsing - Auto-detects and parses responses based on Content-Type headers",
+    "Error Handling - Structured error types (HTTPError, ValidationError) with detailed context",
+    "Retries - Configurable retry strategies with exponential and linear backoff",
+    "Schema Validation - Type-safe runtime validation using Standard Schema compatible libraries",
+    "Hooks System - Lifecycle hooks for request, response, error, and stream events",
+    "Plugins - Extensible plugin system with setup, hooks, and middleware support",
+    "URL Helpers - Dynamic URL parameters, query strings, and method prefixes",
+    "Authorization - Built-in auth helpers for Bearer, Basic, and custom schemes",
+    "Middlewares - Request and response middleware for custom processing",
+    "Timeout Support - Per-request and global timeout configuration",
+    "TypeScript First - Full type inference and safety throughout"
+  ],
+  "publicApiSurface": [
+    "callApi(url, options?) - Simple fetch wrapper with enhanced features",
+    "createFetchClient(config) - Create configured client instance",
+    "createFetchClientWithContext<TContext>() - Create client with custom context type",
+    "defineSchema(schema) - Define route schemas for validation",
+    "definePlugin(plugin) - Create reusable plugins",
+    "HTTPError - HTTP error class with status and response data",
+    "ValidationError - Schema validation error class",
+    "isHTTPError(error) - Type guard for HTTP errors",
+    "isValidationError(error) - Type guard for validation errors",
+    "bodyToFormData(body) - Convert object to FormData",
+    "bodyToURLSearchParams(body) - Convert object to URLSearchParams"
+  ]
+}
