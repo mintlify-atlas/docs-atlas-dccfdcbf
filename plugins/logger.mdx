@@ -1,0 +1,352 @@
+---
+title: Logger Plugin
+description: Built-in plugin for logging HTTP requests and responses
+---
+
+The Logger plugin provides comprehensive logging for CallApi requests and responses. It helps you debug API calls, monitor performance, and track errors during development and production.
+
+## Installation
+
+The logger plugin is available as a separate package:
+
+```bash
+npm install @zayne-labs/callapi-plugins
+```
+
+## Basic Usage
+
+```ts
+import { createFetchClient } from "@zayne-labs/callapi";
+import { loggerPlugin } from "@zayne-labs/callapi-plugins";
+
+const api = createFetchClient({
+  baseURL: "https://api.example.com",
+  plugins: [loggerPlugin()],
+});
+
+// All requests will now be logged
+const { data } = await api("/users");
+```
+
+## Configuration
+
+### LoggerOptions
+
+<Properties>
+  <Property name="enabled" type="boolean | EnabledOptions" default="true">
+    Enable or disable the logger. Can be a boolean or an object to control individual hooks.
+  </Property>
+  <Property name="mode" type="'basic' | 'verbose'" default="'basic'">
+    Logging mode. `basic` shows concise logs, `verbose` includes detailed error data.
+  </Property>
+  <Property name="consoleObject" type="ConsoleLikeObject">
+    Custom console object for logging. Defaults to styled console using `consola`.
+  </Property>
+</Properties>
+
+### EnabledOptions
+
+<Properties>
+  <Property name="onRequest" type="boolean">
+    Log when requests are sent
+  </Property>
+  <Property name="onSuccess" type="boolean">
+    Log successful responses
+  </Property>
+  <Property name="onError" type="boolean">
+    Log all errors (HTTP, validation, and JavaScript errors)
+  </Property>
+  <Property name="onRequestError" type="boolean">
+    Log request errors specifically
+  </Property>
+  <Property name="onResponseError" type="boolean">
+    Log response errors specifically
+  </Property>
+  <Property name="onValidationError" type="boolean">
+    Log validation errors specifically
+  </Property>
+  <Property name="onRetry" type="boolean">
+    Log retry attempts
+  </Property>
+</Properties>
+
+## Examples
+
+### Basic Logging
+
+```ts
+import { loggerPlugin } from "@zayne-labs/callapi-plugins";
+
+const api = createFetchClient({
+  baseURL: "https://api.example.com",
+  plugins: [loggerPlugin()],
+});
+
+// Logs:
+// → Request being sent to: https://api.example.com/users
+// ✓ Request succeeded! { users: [...] }
+```
+
+### Verbose Mode
+
+```ts
+import { loggerPlugin } from "@zayne-labs/callapi-plugins";
+
+const api = createFetchClient({
+  plugins: [
+    loggerPlugin({
+      mode: "verbose",
+    }),
+  ],
+});
+
+// In verbose mode, errors include full error data
+const result = await api("/users/invalid");
+// Logs:
+// → Request being sent to: https://api.example.com/users/invalid
+// ✗ GET request to '...' failed with status: 404 (Not Found)
+//   Reason = "HTTPError: Not Found"
+//   ErrorData: { message: "User not found", code: "USER_NOT_FOUND" }
+```
+
+### Selective Logging
+
+```ts
+import { loggerPlugin } from "@zayne-labs/callapi-plugins";
+
+const api = createFetchClient({
+  plugins: [
+    loggerPlugin({
+      enabled: {
+        onRequest: true,
+        onError: true,
+        onSuccess: false, // Don't log successful responses
+        onRetry: true,
+      },
+    }),
+  ],
+});
+```
+
+### Disable in Production
+
+```ts
+import { loggerPlugin } from "@zayne-labs/callapi-plugins";
+
+const api = createFetchClient({
+  plugins: [
+    loggerPlugin({
+      enabled: process.env.NODE_ENV !== "production",
+    }),
+  ],
+});
+```
+
+### Custom Console Object
+
+```ts
+import { loggerPlugin } from "@zayne-labs/callapi-plugins";
+
+const customLogger = {
+  log: (message: string, ...args: unknown[]) => {
+    // Custom log implementation
+    console.log(`[API] ${message}`, ...args);
+  },
+  error: (message: string, ...args: unknown[]) => {
+    // Send errors to monitoring service
+    monitoringService.error(message, ...args);
+    console.error(`[API ERROR] ${message}`, ...args);
+  },
+  warn: (message: string, ...args: unknown[]) => {
+    console.warn(`[API WARN] ${message}`, ...args);
+  },
+  success: (message: string, ...args: unknown[]) => {
+    console.log(`[API SUCCESS] ${message}`, ...args);
+  },
+};
+
+const api = createFetchClient({
+  plugins: [
+    loggerPlugin({
+      consoleObject: customLogger,
+    }),
+  ],
+});
+```
+
+### Environment-Specific Configuration
+
+```ts
+import { loggerPlugin } from "@zayne-labs/callapi-plugins";
+
+const getLoggerConfig = () => {
+  if (process.env.NODE_ENV === "development") {
+    return {
+      mode: "verbose" as const,
+      enabled: true,
+    };
+  }
+  
+  if (process.env.NODE_ENV === "test") {
+    return {
+      enabled: false,
+    };
+  }
+  
+  // Production: only log errors
+  return {
+    enabled: {
+      onError: true,
+      onRequest: false,
+      onSuccess: false,
+    },
+  };
+};
+
+const api = createFetchClient({
+  plugins: [loggerPlugin(getLoggerConfig())],
+});
+```
+
+## Log Output Examples
+
+### Request Log
+
+```
+Request being sent to: https://api.example.com/users/123
+```
+
+### Success Log
+
+```
+✓ Request succeeded! { id: 123, name: "John Doe" }
+```
+
+### HTTP Error (Basic Mode)
+
+```
+✗ GET request to 'https://api.example.com/users/999' failed with status: 404 (Not Found)
+Reason = "HTTPError: User not found"
+```
+
+### HTTP Error (Verbose Mode)
+
+```
+✗ GET request to 'https://api.example.com/users/999' failed with status: 404 (Not Found)
+Reason = "HTTPError: User not found"
+ErrorData: { message: "User not found", code: "USER_NOT_FOUND", requestId: "abc123" }
+```
+
+### Validation Error (Basic Mode)
+
+```
+✗ (BODY) Validation for request to 'https://api.example.com/users' failed!
+ValidationError: ✖ Expected string, received number → at email | ✖ String must contain at least 2 character(s) → at name
+```
+
+### Validation Error (Verbose Mode)
+
+```
+✗ (BODY) Validation for request to 'https://api.example.com/users' failed!
+ValidationError: ✖ Expected string, received number → at email | ✖ String must contain at least 2 character(s) → at name
+Issues: [
+  { path: ["email"], message: "Expected string, received number" },
+  { path: ["name"], message: "String must contain at least 2 character(s)" }
+]
+```
+
+### Request Error
+
+```
+✗ POST to 'https://api.example.com/users' failed!
+Reason = TypeError: Failed to fetch
+```
+
+### Retry Log
+
+```
+Retrying request... Attempt: 2
+```
+
+## Integration with Monitoring
+
+```ts
+import { loggerPlugin } from "@zayne-labs/callapi-plugins";
+import * as Sentry from "@sentry/browser";
+
+const monitoringLogger = {
+  log: console.log,
+  success: console.log,
+  warn: console.warn,
+  error: (message: string, ...args: unknown[]) => {
+    // Send to monitoring service
+    Sentry.captureMessage(message, {
+      level: "error",
+      extra: { args },
+    });
+    console.error(message, ...args);
+  },
+};
+
+const api = createFetchClient({
+  plugins: [
+    loggerPlugin({
+      consoleObject: monitoringLogger,
+      mode: "verbose",
+    }),
+  ],
+});
+```
+
+## Combining with Other Plugins
+
+```ts
+import { loggerPlugin } from "@zayne-labs/callapi-plugins";
+import { retryPlugin } from "./plugins/retry";
+
+const api = createFetchClient({
+  plugins: [
+    loggerPlugin({
+      enabled: {
+        onRequest: true,
+        onError: true,
+        onRetry: true, // Log retry attempts
+      },
+    }),
+    retryPlugin({ maxAttempts: 3 }),
+  ],
+});
+
+// Will log:
+// → Request being sent to: ...
+// Retrying request... Attempt: 2
+// Retrying request... Attempt: 3
+// ✓ Request succeeded! ...
+```
+
+## TypeScript
+
+The logger plugin is fully typed:
+
+```ts
+import { loggerPlugin, type LoggerOptions } from "@zayne-labs/callapi-plugins";
+
+const config: LoggerOptions = {
+  mode: "verbose",
+  enabled: {
+    onRequest: true,
+    onError: true,
+  },
+};
+
+const api = createFetchClient({
+  plugins: [loggerPlugin(config)],
+});
+```
+
+## See Also
+
+- [Plugins Guide](/guides/plugins) - Learn about creating plugins
+- [Custom Plugins](/plugins/custom-plugins) - Examples of custom plugins
+- [Hooks](/api/hooks) - Lifecycle hooks used by the logger
+- [Error Handling](/guides/error-handling) - Understanding error types

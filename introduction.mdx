@@ -1,0 +1,316 @@
+---
+title: Introduction
+description: An advanced fetch library that solves real problems in modern web applications
+---
+
+<img
+  className="block"
+  src="https://raw.githubusercontent.com/zayne-labs/callapi/refs/heads/main/apps/docs/public/logo.png"
+  alt="CallApi Logo"
+  width="300"
+/>
+
+# Welcome to CallApi
+
+An advanced fetch library that actually solves real problems. Drop-in replacement for fetch with zero dependencies and under 6KB.
+
+<CardGroup cols={2}>
+  <Card title="Quick Start" icon="rocket" href="/quickstart">
+    Get up and running with CallApi in under 5 minutes
+  </Card>
+  <Card title="Installation" icon="download" href="/installation">
+    Install CallApi with your favorite package manager
+  </Card>
+  <Card title="API Reference" icon="book" href="/api/call-api">
+    Explore the complete API documentation
+  </Card>
+  <Card title="Plugins" icon="puzzle-piece" href="https://github.com/zayne-labs/callapi/tree/main/packages/callapi-plugins">
+    Extend CallApi with powerful plugins
+  </Card>
+</CardGroup>
+
+## Why CallApi?
+
+Fetch is too basic for real apps. You end up writing the same boilerplate: error handling, retries, deduplication, response parsing, and more. CallApi handles all of that and practically more.
+
+```javascript
+import { callApi } from "@zayne-labs/callapi";
+
+const { data, error } = await callApi("/api/users");
+```
+
+## Key Features
+
+<CardGroup cols={2}>
+  <Card title="Request Deduplication" icon="clone">
+    Automatically handles duplicate requests. No race conditions, no wasted bandwidth.
+  </Card>
+  <Card title="Smart Response Parsing" icon="wand-magic-sparkles">
+    Automatically detects Content-Type and parses responses accordingly.
+  </Card>
+  <Card title="Structured Error Handling" icon="triangle-exclamation">
+    HTTPError, ValidationError, and JavaScript errors all structured for easy handling.
+  </Card>
+  <Card title="Automatic Retries" icon="rotate">
+    Built-in retry logic with exponential backoff and custom retry conditions.
+  </Card>
+  <Card title="Schema Validation" icon="shield-check">
+    TypeScript-first with runtime validation using Zod, Valibot, or any Standard Schema.
+  </Card>
+  <Card title="Lifecycle Hooks" icon="webhook">
+    Hook into any point of the request/response lifecycle for maximum control.
+  </Card>
+  <Card title="Plugin System" icon="plug">
+    Extend functionality with reusable plugins for logging, metrics, auth, and more.
+  </Card>
+  <Card title="URL Helpers" icon="link">
+    Dynamic params, query strings, and method prefixes make URLs effortless.
+  </Card>
+</CardGroup>
+
+## Request Deduplication
+
+User spam-clicks a button? CallApi handles it automatically. No race conditions.
+
+```javascript
+const req1 = callApi("/api/user");
+const req2 = callApi("/api/user"); // Cancels req1 by default
+
+// Or configure to share the response instead
+const api = createFetchClient({
+  dedupeStrategy: "defer", // Share response between duplicate requests
+});
+```
+
+<Note>
+  The default `dedupeStrategy` is `"cancel"` which cancels the previous request. Use `"defer"` to share responses, or `"off"` to disable deduplication.
+</Note>
+
+## Smart Response Parsing
+
+CallApi looks at the Content-Type header and automatically parses your responses.
+
+```javascript
+// JSON response - automatically parsed
+const { data } = await callApi("/api/data");
+
+// Specify response type if needed
+const { data: blob } = await callApi("/api/image", {
+  responseType: "blob",
+});
+```
+
+Supported response types: `json`, `text`, `blob`, `arrayBuffer`, `formData`, `stream`
+
+## Structured Error Handling
+
+No more guessing what went wrong. CallApi provides structured errors for every scenario.
+
+```javascript
+import { callApi, HTTPError } from "@zayne-labs/callapi";
+
+const { data, error } = await callApi("/api/users");
+
+if (error) {
+  console.log(error.name); // "HTTPError", "ValidationError", or "TypeError"
+  console.log(error.message);
+  
+  if (error instanceof HTTPError) {
+    console.log(error.response.status); // 404, 500, etc.
+    console.log(error.errorData); // Actual API error response
+  }
+}
+```
+
+<Tip>
+  Use `resultMode: "result"` (default) for error objects, or `resultMode: "data"` to receive unwrapped data directly.
+</Tip>
+
+## Automatic Retries
+
+Retries with exponential backoff out of the box. Fully configurable.
+
+```javascript
+await callApi("/api/data", {
+  retryAttempts: 3,
+  retryStrategy: "exponential", // or "linear"
+  retryStatusCodes: [429, 500, 502, 503],
+  retryDelay: 1000, // Base delay in ms
+});
+```
+
+## Schema Validation
+
+Define your API contract with TypeScript types and runtime validation.
+
+```typescript
+import { createFetchClient } from "@zayne-labs/callapi";
+import { defineSchema } from "@zayne-labs/callapi/utils";
+import { z } from "zod";
+
+const userSchema = z.object({
+  id: z.number(),
+  name: z.string(),
+  email: z.string().email(),
+});
+
+const api = createFetchClient({
+  schema: defineSchema({
+    "/users/:id": {
+      data: userSchema,
+    },
+  }),
+});
+
+// Fully typed and validated at runtime
+const { data } = await api("/users/:id", {
+  params: { id: 123 },
+});
+// data is typed as { id: number; name: string; email: string }
+```
+
+<Note>
+  CallApi supports any validation library that implements the [Standard Schema](https://standardschema.dev/) specification, including Zod, Valibot, Yup, and more.
+</Note>
+
+## Lifecycle Hooks
+
+Hook into CallApi's lifecycle at any point for logging, authentication, error tracking, and more.
+
+```javascript
+const api = createFetchClient({
+  onRequest: ({ request }) => {
+    request.headers.set("Authorization", `Bearer ${getToken()}`);
+    console.log("→ Sending request");
+  },
+  onSuccess: ({ data, response }) => {
+    console.log("✓ Request successful:", response.status);
+  },
+  onError: ({ error }) => {
+    console.error("✗ Request failed:", error.message);
+    Sentry.captureException(error);
+  },
+});
+```
+
+Available hooks:
+- `onRequest` - Before the request is sent
+- `onRequestReady` - After request is prepared but before fetch
+- `onSuccess` - On successful response (2xx status)
+- `onResponse` - On any response (success or HTTP error)
+- `onResponseError` - On HTTP error responses (4xx, 5xx)
+- `onValidationError` - On schema validation failure
+- `onRequestError` - On network/request errors
+- `onError` - On any error
+- `onRequestStream` - For upload progress tracking
+- `onResponseStream` - For download progress tracking
+
+## Plugin System
+
+Extend CallApi with reusable plugins for cross-cutting concerns.
+
+```javascript
+import { definePlugin } from "@zayne-labs/callapi/utils";
+
+const metricsPlugin = definePlugin({
+  id: "metrics",
+  name: "Metrics Plugin",
+  setup: ({ options }) => ({
+    options: {
+      ...options,
+      meta: { startTime: Date.now() },
+    },
+  }),
+  hooks: {
+    onSuccess: ({ options }) => {
+      const duration = Date.now() - options.meta.startTime;
+      console.info(`✓ Request completed in ${duration}ms`);
+    },
+  },
+  middlewares: {
+    fetchMiddleware: (ctx) => async (input, init) => {
+      console.info("→", input);
+      const response = await ctx.fetchImpl(input, init);
+      console.info("←", response.status);
+      return response;
+    },
+  },
+});
+
+const api = createFetchClient({
+  plugins: [metricsPlugin],
+});
+```
+
+<Tip>
+  Check out the [official plugins](https://github.com/zayne-labs/callapi/tree/main/packages/callapi-plugins) for ready-to-use solutions.
+</Tip>
+
+## URL Helpers
+
+Dynamic params, query strings, and method prefixes make working with URLs effortless.
+
+```javascript
+// Dynamic params
+await callApi("/users/:id", { params: { id: 123 } });
+// → GET /users/123
+
+// Query strings
+await callApi("/search", { query: { q: "test", page: 1 } });
+// → GET /search?q=test&page=1
+
+// Method prefixes
+await callApi("@post/users", { body: { name: "John" } });
+// → POST /users
+
+await callApi("@delete/users/123");
+// → DELETE /users/123
+```
+
+Supported prefixes: `@get`, `@post`, `@put`, `@patch`, `@delete`, `@head`, `@options`
+
+## What Makes CallApi Special?
+
+<CardGroup cols={2}>
+  <Card title="TypeScript-First" icon="code">
+    Full type inference everywhere. Write once, type-safe forever.
+  </Card>
+  <Card title="Familiar API" icon="hand-peace">
+    If you know fetch, you already know CallApi.
+  </Card>
+  <Card title="Actually Small" icon="feather">
+    Under 6KB gzipped. Zero dependencies. Not 50KB like other libraries.
+  </Card>
+  <Card title="Blazing Fast" icon="bolt">
+    Built on native Web APIs. No unnecessary abstractions.
+  </Card>
+  <Card title="Works Everywhere" icon="globe">
+    Browsers, Node.js 18+, Deno, Bun, Cloudflare Workers, and more.
+  </Card>
+  <Card title="Battle-Tested" icon="shield">
+    Used in production by teams building real applications.
+  </Card>
+</CardGroup>
+
+## Runtime Support
+
+CallApi works in any JavaScript runtime that supports the Fetch API:
+
+- Browsers (modern)
+- Node.js 18+
+- Deno
+- Bun
+- Cloudflare Workers
+- Vercel Edge Functions
+- Any other environment with native fetch
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Quick Start" icon="rocket" href="/quickstart">
+    Build your first CallApi request in 5 minutes
+  </Card>
+  <Card title="Installation Guide" icon="download" href="/installation">
+    Install CallApi with npm, yarn, pnpm, or bun
+  </Card>
+</CardGroup>

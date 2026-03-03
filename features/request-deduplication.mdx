@@ -1,0 +1,412 @@
+---
+title: 'Request Deduplication'
+description: 'Automatically handle duplicate requests with flexible deduplication strategies'
+---
+
+## Overview
+
+Request deduplication prevents multiple identical requests from being sent simultaneously. This is especially useful for:
+
+- Search-as-you-type functionality (cancel previous searches)
+- Configuration loading (share response across components)
+- Preventing double-submissions
+- Optimizing parallel component renders
+
+## Deduplication Strategies
+
+### Cancel Strategy
+
+Cancels the previous request when a duplicate is detected. Perfect for search or autocomplete where only the latest request matters.
+
+```typescript
+import { callApi } from "@zayne-labs/callapi";
+
+// Search implementation
+const handleSearch = async (query: string) => {
+  try {
+    const { data } = await callApi("/api/search", {
+      method: "POST",
+      body: { query },
+      dedupeStrategy: "cancel",
+      dedupeKey: "search" // All searches share the same key
+    });
+    updateResults(data);
+  } catch (error) {
+    if (error.name === "AbortError") {
+      // Previous search was cancelled (expected)
+      return;
+    }
+    console.error("Search failed:", error);
+  }
+};
+
+// Typing "hello" quickly:
+// Request 1: query="h"     → Cancelled
+// Request 2: query="he"    → Cancelled
+// Request 3: query="hel"   → Cancelled
+// Request 4: query="hell"  → Cancelled
+// Request 5: query="hello" → Completes ✓
+```
+
+### Defer Strategy
+
+Shares the same response promise between duplicate requests. Ideal for loading shared configuration or data that multiple components need.
+
+```typescript
+import { callApi } from "@zayne-labs/callapi";
+
+// Multiple components loading the same config
+const loadConfig = () => callApi("/api/config", {
+  dedupeStrategy: "defer",
+  dedupeKey: "app-config"
+});
+
+// Parallel calls from different components:
+const [result1, result2, result3] = await Promise.all([
+  loadConfig(), // Actual fetch request
+  loadConfig(), // Waits for request 1
+  loadConfig()  // Waits for request 1
+]);
+
+// Only 1 HTTP request was made!
+// All three get the same response
+console.log(result1.data === result2.data); // true
+```
+
+### None Strategy
+
+Disables deduplication entirely. Every request executes independently.
+
+```typescript
+const result = await callApi("/api/data", {
+  dedupeStrategy: "none" // No deduplication
+});
+```
+
+## Configuration Options
+
+### dedupeStrategy
+
+<ParamField path="dedupeStrategy" type="'cancel' | 'defer' | 'none' | (context) => string" default="cancel">
+  Strategy for handling duplicate requests. Can be static or dynamic based on request context.
+</ParamField>
+
+```typescript dedupe.ts
+type DedupeStrategyUnion = "cancel" | "defer" | "none";
+
+type DedupeOptions = {
+  dedupeStrategy?: 
+    | DedupeStrategyUnion 
+    | ((context: RequestContext) => DedupeStrategyUnion);
+};
+```
+
+**Static strategy:**
+```typescript
+const client = createFetchClient({
+  baseURL: "https://api.example.com",
+  dedupeStrategy: "defer" // All requests use defer
+});
+```
+
+**Dynamic strategy:**
+```typescript
+const client = createFetchClient({
+  dedupeStrategy: (context) => {
+    // Use defer for GET, cancel for everything else
+    return context.options.method === "GET" ? "defer" : "cancel";
+  }
+});
+```
+
+### dedupeKey
+
+<ParamField path="dedupeKey" type="string | (context) => string" default="auto-generated">
+  Custom key generator for identifying duplicate requests. Defaults to a key based on URL, method, body, and stable headers.
+</ParamField>
+
+```typescript dedupe.ts
+type DedupeOptions = {
+  dedupeKey?: string | ((context: RequestContext) => string | undefined);
+};
+```
+
+**Default behavior:**
+The auto-generated key includes:
+- Full URL (including query parameters)
+- HTTP method
+- Request body
+- Stable headers (excludes Date, Authorization, User-Agent, etc.)
+
+**Custom static key:**
+```typescript
+// Singleton request - only one can run at a time
+const config = await callApi("/api/config", {
+  dedupeKey: "app-config",
+  dedupeStrategy: "defer"
+});
+```
+
+**Custom dynamic key:**
+```typescript
+// User-specific deduplication
+const dashboard = await callApi("/api/dashboard", {
+  dedupeKey: (context) => {
+    const userId = context.options.fullURL.match(/user\/(\d+)/)?.[1];
+    return `dashboard-${userId}`;
+  }
+});
+
+// Ignore volatile query parameters
+const search = await callApi("/api/search?q=test&timestamp=123", {
+  dedupeKey: (context) => {
+    const url = new URL(context.options.fullURL);
+    url.searchParams.delete("timestamp");
+    return url.toString();
+  }
+});
+```
+
+### dedupeCacheScope
+
+<ParamField path="dedupeCacheScope" type="'local' | 'global'" default="local">
+  Controls whether deduplication cache is shared across all client instances or isolated per client.
+</ParamField>
+
+```typescript dedupe.ts
+type DedupeOptions = {
+  dedupeCacheScope?: "global" | "local";
+};
+```
+
+**Local scope (default):**
+```typescript
+const userClient = createFetchClient({ baseURL: "/api/users" });
+const postClient = createFetchClient({ baseURL: "/api/posts" });
+
+// These clients don't share deduplication state
+```
+
+**Global scope:**
+```typescript
+const userClient = createFetchClient({
+  baseURL: "/api/users",
+  dedupeCacheScope: "global"
+});
+
+const profileClient = createFetchClient({
+  baseURL: "/api/profiles",
+  dedupeCacheScope: "global"
+});
+
+// These clients share deduplication state
+```
+
+### dedupeCacheScopeKey
+
+<ParamField path="dedupeCacheScopeKey" type="string | (context) => string" default="default">
+  Namespace for global deduplication cache. Only relevant when `dedupeCacheScope` is `"global"`.
+</ParamField>
+
+```typescript dedupe.ts
+type DedupeOptions = {
+  dedupeCacheScopeKey?: "default" | string | ((context: RequestContext) => string | undefined);
+};
+```
+
+**Use cases:**
+```typescript
+// Group related services
+const userClient = createFetchClient({
+  baseURL: "/api/users",
+  dedupeCacheScope: "global",
+  dedupeCacheScopeKey: "user-service"
+});
+
+const profileClient = createFetchClient({
+  baseURL: "/api/profiles",
+  dedupeCacheScope: "global",
+  dedupeCacheScopeKey: "user-service" // Shares cache with userClient
+});
+
+// Separate analytics
+const analyticsClient = createFetchClient({
+  baseURL: "/api/analytics",
+  dedupeCacheScope: "global",
+  dedupeCacheScopeKey: "analytics" // Different cache namespace
+});
+
+// Environment-specific
+const apiClient = createFetchClient({
+  dedupeCacheScope: "global",
+  dedupeCacheScopeKey: `api-${process.env.NODE_ENV}`
+});
+```
+
+## Advanced Examples
+
+### Search-as-you-type
+
+```typescript
+import { callApi } from "@zayne-labs/callapi";
+import { debounce } from "lodash";
+
+const searchUsers = debounce(async (query: string) => {
+  try {
+    const { data } = await callApi("/api/users/search", {
+      method: "POST",
+      body: { query },
+      dedupeStrategy: "cancel",
+      dedupeKey: "user-search",
+      throwOnError: true
+    });
+    
+    updateSearchResults(data);
+  } catch (error) {
+    if (error.name === "AbortError") {
+      // Expected - previous search cancelled
+      return;
+    }
+    handleSearchError(error);
+  }
+}, 300);
+
+// In your input handler
+input.addEventListener("input", (e) => {
+  searchUsers(e.target.value);
+});
+```
+
+### Shared Configuration Loading
+
+```typescript
+import { createFetchClient } from "@zayne-labs/callapi";
+
+const configClient = createFetchClient({
+  baseURL: "/api",
+  dedupeStrategy: "defer",
+  dedupeCacheScope: "global",
+  dedupeCacheScopeKey: "app-config"
+});
+
+const loadAppConfig = () => configClient("/config", {
+  dedupeKey: "app-config"
+});
+
+// Multiple components can call this simultaneously
+// Only one request will be made
+export const useAppConfig = () => {
+  const [config, setConfig] = useState(null);
+  
+  useEffect(() => {
+    loadAppConfig().then(result => setConfig(result.data));
+  }, []);
+  
+  return config;
+};
+```
+
+### Conditional Deduplication
+
+```typescript
+const client = createFetchClient({
+  baseURL: "https://api.example.com",
+  dedupeStrategy: (context) => {
+    const { method, fullURL } = context.options;
+    
+    // Defer for config/reference data
+    if (fullURL.includes("/config") || fullURL.includes("/reference")) {
+      return "defer";
+    }
+    
+    // Cancel for search endpoints
+    if (fullURL.includes("/search")) {
+      return "cancel";
+    }
+    
+    // No deduplication for mutations
+    if (method === "POST" || method === "PUT" || method === "DELETE") {
+      return "none";
+    }
+    
+    // Default to cancel for other GET requests
+    return "cancel";
+  }
+});
+```
+
+### User-Specific Deduplication
+
+```typescript
+const { data } = await callApi("/api/users/:userId/profile", {
+  params: { userId: "123" },
+  dedupeStrategy: "defer",
+  dedupeKey: (context) => {
+    // Each user gets their own deduplication key
+    const userId = context.request.url.match(/users\/(\w+)\/profile/)?.[1];
+    return `user-profile-${userId}`;
+  }
+});
+```
+
+## How It Works
+
+<Note>
+**Sequential Task Queue**: CallApi uses a non-zero setTimeout delay to ensure requests are processed sequentially, allowing the cache to be checked and populated correctly even when multiple requests start simultaneously.
+</Note>
+
+From the source code:
+
+```typescript dedupe.ts
+/**
+ * Force sequential execution of parallel requests to enable proper cache-based deduplication.
+ *
+ * Problem: When Promise.all([callApi(url), callApi(url)]) executes, both requests
+ * start synchronously and reach this point before either can populate the cache.
+ *
+ * Why setTimeout works:
+ * - Each setTimeout creates a separate task in the task queue
+ * - Tasks execute sequentially, not simultaneously
+ * - Request 1's task runs first: checks cache (empty) → continues → populates cache
+ * - Request 2's task runs after: checks cache (populated) → uses cached promise
+ * - Deduplication succeeds
+ *
+ * IMPORTANT: The delay must be non-zero to avoid optimization batching.
+ */
+if (dedupeKey !== null) {
+  await waitFor(0.001); // 1 microsecond delay for task queue scheduling
+}
+```
+
+## Best Practices
+
+<Tip>
+**Use Descriptive Keys**: When using custom deduplication keys, choose descriptive names that clearly indicate what's being deduplicated:
+
+```typescript
+dedupeKey: "user-profile-123"      // Good
+dedupeKey: "cache-key-1"           // Bad
+```
+</Tip>
+
+<Warning>
+**Avoid Volatile Data in Keys**: Don't include timestamps or random IDs in your deduplication keys:
+
+```typescript
+// Bad - will never deduplicate
+dedupeKey: `search-${Date.now()}`
+
+// Good - deduplicates based on actual query
+dedupeKey: `search-${query}`
+```
+</Warning>
+
+<Note>
+**Memory Considerations**: Global scope creates separate caches for each scope key. Consider the number of different scope keys in your application to avoid memory issues.
+</Note>
+
+## Related
+
+- [Error Handling](/features/error-handling) - Handle AbortError from cancelled requests
+- [Retries & Timeout](/features/retries-and-timeout) - Configure retry behavior
+- [Authorization](/features/authorization) - Note: auth headers are excluded from default deduplication keys

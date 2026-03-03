@@ -1,0 +1,902 @@
+---
+title: 'Advanced Configuration'
+description: 'Deep dive into CallApi configuration options'
+icon: 'sliders'
+---
+
+## Overview
+
+CallApi provides extensive configuration options that control request behavior, error handling, caching, retries, and more. This guide covers advanced configuration patterns and options.
+
+## Configuration Hierarchy
+
+CallApi merges configuration from three levels:
+
+```typescript
+// 1. Base configuration (global)
+const callApi = createFetchClient({
+  baseURL: 'https://api.example.com',
+  timeout: 5000,
+});
+
+// 2. Instance configuration (per client)
+const authApi = callApi.create({
+  headers: { Authorization: 'Bearer token' },
+});
+
+// 3. Request configuration (per call)
+await authApi('/users', {
+  timeout: 10000, // Override base timeout
+});
+```
+
+Merge order: Base → Instance → Request (later configs override earlier ones)
+
+## Result Modes
+
+Control how CallApi returns results:
+
+<Accordion title="Result Mode Options">
+
+**all** (default)
+
+Returns `{ data, error, response }` with complete information:
+
+```typescript
+const { data, error, response } = await callApi('/users');
+
+if (error) {
+  console.error('Failed:', error.message);
+} else {
+  console.log('Users:', data);
+  console.log('Status:', response.status);
+}
+```
+
+**onlyData**
+
+Returns only the parsed data:
+
+```typescript
+const users = await callApi('/users', {
+  resultMode: 'onlyData',
+});
+
+// users is TData | null
+if (users) {
+  console.log('Users:', users);
+}
+```
+
+**onlyResponse**
+
+Returns only the Response object:
+
+```typescript
+const response = await callApi('/users', {
+  resultMode: 'onlyResponse',
+});
+
+if (response.ok) {
+  const users = await response.json();
+}
+```
+
+**fetchApi**
+
+Returns Response and skips internal parsing/validation:
+
+```typescript
+const response = await callApi('/users', {
+  resultMode: 'fetchApi',
+});
+
+// Handle response manually
+const text = await response.text();
+const data = customParser(text);
+```
+
+**withoutResponse**
+
+Returns `{ data, error }` without the response object:
+
+```typescript
+const { data, error } = await callApi('/users', {
+  resultMode: 'withoutResponse',
+});
+
+if (error) {
+  console.error('Failed:', error.message);
+} else {
+  console.log('Users:', data);
+}
+```
+
+Source: [types/common.ts:381-398](~/workspace/source/packages/callapi/src/types/common.ts)
+
+</Accordion>
+
+## Response Types
+
+Specify how to parse response bodies:
+
+```typescript
+// JSON response (default)
+const { data } = await callApi<User[]>('/users', {
+  responseType: 'json',
+});
+
+// Plain text
+const { data } = await callApi<string>('/file.txt', {
+  responseType: 'text',
+});
+
+// Binary data
+const { data } = await callApi<Blob>('/image.png', {
+  responseType: 'blob',
+});
+
+// Array buffer
+const { data } = await callApi<ArrayBuffer>('/binary', {
+  responseType: 'arrayBuffer',
+});
+
+// Stream
+const { data } = await callApi<ReadableStream>('/stream', {
+  responseType: 'stream',
+});
+```
+
+Source: [types/common.ts:343-376](~/workspace/source/packages/callapi/src/types/common.ts)
+
+## Error Handling
+
+### throwOnError
+
+Control whether errors are thrown or returned:
+
+<AccordionGroup>
+
+<Accordion title="Boolean Mode">
+
+```typescript
+// Never throw (default)
+const { error } = await callApi('/users', {
+  throwOnError: false,
+});
+
+if (error) {
+  // Handle error
+}
+
+// Always throw
+try {
+  const { data } = await callApi('/users', {
+    throwOnError: true,
+  });
+} catch (error) {
+  // Handle error
+}
+```
+
+</Accordion>
+
+<Accordion title="Function Mode">
+
+Conditionally throw based on error details:
+
+```typescript
+await callApi('/users', {
+  throwOnError: ({ error, response }) => {
+    // Throw on client errors (4xx)
+    if (response?.status >= 400 && response?.status < 500) {
+      return true;
+    }
+    
+    // Don't throw on server errors (5xx)
+    return false;
+  },
+});
+
+// Throw only on specific errors
+await callApi('/users', {
+  throwOnError: ({ error }) => {
+    return error.type === 'validation';
+  },
+});
+```
+
+Source: [types/common.ts:399-444](~/workspace/source/packages/callapi/src/types/common.ts)
+
+</Accordion>
+
+</AccordionGroup>
+
+### defaultHTTPErrorMessage
+
+Customize error messages:
+
+```typescript
+// Static message
+const callApi = createFetchClient({
+  defaultHTTPErrorMessage: 'API request failed',
+});
+
+// Dynamic message
+const callApi = createFetchClient({
+  defaultHTTPErrorMessage: ({ response, errorData }) => {
+    switch (response.status) {
+      case 401:
+        return 'Please log in to continue';
+      case 403:
+        return 'You do not have permission';
+      case 404:
+        return 'Resource not found';
+      case 429:
+        return 'Too many requests, please slow down';
+      default:
+        return errorData?.message || 'Request failed';
+    }
+  },
+});
+```
+
+Source: [types/common.ts:216-249](~/workspace/source/packages/callapi/src/types/common.ts)
+
+## Request Deduplication
+
+Prevent duplicate concurrent requests:
+
+<Accordion title="Dedupe Strategy Options">
+
+**cancel** (default)
+
+Cancels new requests if an identical one is in flight:
+
+```typescript
+const callApi = createFetchClient({
+  dedupeStrategy: 'cancel',
+});
+
+// Only the first request executes
+const [result1, result2, result3] = await Promise.all([
+  callApi('/users'),
+  callApi('/users'),
+  callApi('/users'),
+]);
+// result2 and result3 are cancelled
+```
+
+**defer**
+
+Defers new requests to the in-flight one:
+
+```typescript
+const callApi = createFetchClient({
+  dedupeStrategy: 'defer',
+});
+
+// All three receive the same response
+const [result1, result2, result3] = await Promise.all([
+  callApi('/users'),
+  callApi('/users'),
+  callApi('/users'),
+]);
+// All get the same data from one request
+```
+
+**ignore**
+
+Disables deduplication:
+
+```typescript
+const callApi = createFetchClient({
+  dedupeStrategy: 'ignore',
+});
+
+// All three execute independently
+const [result1, result2, result3] = await Promise.all([
+  callApi('/users'),
+  callApi('/users'),
+  callApi('/users'),
+]);
+```
+
+Source: [dedupe.ts:1-15](~/workspace/source/packages/callapi/src/dedupe.ts)
+
+</Accordion>
+
+<Accordion title="Dedupe Configuration">
+
+**dedupeCacheScope**
+
+Control cache scope:
+
+```typescript
+// Local to client instance (default)
+dedupeStrategy: 'defer',
+dedupeCacheScope: 'local',
+
+// Global across all instances
+dedupeStrategy: 'defer',
+dedupeCacheScope: 'global',
+```
+
+**dedupeCacheScopeKey**
+
+Namespace for global cache:
+
+```typescript
+dedupeStrategy: 'defer',
+dedupeCacheScope: 'global',
+dedupeCacheScopeKey: 'my-api', // Separate from other APIs
+```
+
+**dedupeKey**
+
+Custom key generation:
+
+```typescript
+dedupeKey: ({ options, request }) => {
+  // Include user ID in key
+  return `${options.fullURL}-${options.meta?.userId}`;
+},
+```
+
+Source: [constants/defaults.ts:11-17](~/workspace/source/packages/callapi/src/constants/defaults.ts)
+
+</Accordion>
+
+## Retry Configuration
+
+Automatically retry failed requests:
+
+<Accordion title="Retry Options">
+
+**retryAttempts**
+
+Number of retry attempts:
+
+```typescript
+const callApi = createFetchClient({
+  retryAttempts: 3, // Retry up to 3 times
+});
+```
+
+**retryDelay**
+
+Delay between retries (milliseconds):
+
+```typescript
+retryDelay: 1000, // Wait 1 second between retries
+```
+
+**retryMaxDelay**
+
+Maximum delay for exponential backoff:
+
+```typescript
+retryMaxDelay: 10000, // Cap at 10 seconds
+```
+
+**retryStrategy**
+
+Backoff strategy:
+
+```typescript
+// Linear: delay, 2*delay, 3*delay
+retryStrategy: 'linear',
+
+// Exponential: delay, delay^2, delay^3
+retryStrategy: 'exponential',
+```
+
+**retryMethods**
+
+HTTP methods to retry:
+
+```typescript
+retryMethods: ['GET', 'POST', 'PUT'],
+```
+
+**retryStatusCodes**
+
+Status codes that trigger retry:
+
+```typescript
+retryStatusCodes: [408, 429, 500, 502, 503, 504],
+```
+
+**retryCondition**
+
+Custom retry logic:
+
+```typescript
+retryCondition: ({ error, response, retryAttemptCount }) => {
+  // Don't retry validation errors
+  if (error.type === 'validation') {
+    return false;
+  }
+  
+  // Retry rate limits with exponential backoff
+  if (response?.status === 429) {
+    return retryAttemptCount < 5;
+  }
+  
+  // Retry server errors
+  return response?.status >= 500;
+},
+```
+
+Source: [constants/defaults.ts:28-35](~/workspace/source/packages/callapi/src/constants/defaults.ts)
+
+</Accordion>
+
+## Custom Fetch Implementation
+
+Replace the fetch function:
+
+```typescript
+import fetch from 'node-fetch';
+
+// Use node-fetch in Node.js
+const callApi = createFetchClient({
+  customFetchImpl: fetch as any,
+});
+
+// Mock fetch for testing
+const callApi = createFetchClient({
+  customFetchImpl: async (url, init) => {
+    return new Response(JSON.stringify({ mocked: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  },
+});
+
+// Add custom behavior
+const callApi = createFetchClient({
+  customFetchImpl: async (url, init) => {
+    console.log('Fetching:', url);
+    const response = await fetch(url, init);
+    console.log('Response:', response.status);
+    return response;
+  },
+});
+```
+
+Source: [types/common.ts:172-213](~/workspace/source/packages/callapi/src/types/common.ts)
+
+## Body Serialization
+
+Customize request body serialization:
+
+```typescript
+// XML serialization
+const callApi = createFetchClient({
+  bodySerializer: (data) => {
+    return `<request>${
+      Object.entries(data)
+        .map(([key, value]) => `<${key}>${value}</${key}>`)
+        .join('')
+    }</request>`;
+  },
+});
+
+// Custom JSON formatting
+const callApi = createFetchClient({
+  bodySerializer: (data) => {
+    return JSON.stringify(data, null, 2);
+  },
+});
+
+// FormData serialization
+const callApi = createFetchClient({
+  bodySerializer: (data) => {
+    const formData = new FormData();
+    Object.entries(data).forEach(([key, value]) => {
+      formData.append(key, String(value));
+    });
+    return formData;
+  },
+});
+```
+
+Source: [types/common.ts:132-160](~/workspace/source/packages/callapi/src/types/common.ts)
+
+## Response Parsing
+
+Custom response parsing:
+
+```typescript
+// XML parsing
+const callApi = createFetchClient({
+  responseParser: (text) => {
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(text, 'text/xml');
+    return xmlToObject(doc);
+  },
+});
+
+// CSV parsing
+const callApi = createFetchClient({
+  responseParser: (text) => {
+    const lines = text.split('\n');
+    const headers = lines[0].split(',');
+    
+    return lines.slice(1).map(line => {
+      const values = line.split(',');
+      return headers.reduce((obj, header, i) => {
+        obj[header] = values[i];
+        return obj;
+      }, {});
+    });
+  },
+});
+
+// Custom JSON parsing with reviver
+const callApi = createFetchClient({
+  responseParser: (text) => {
+    return JSON.parse(text, (key, value) => {
+      // Parse ISO dates as Date objects
+      if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}T/.test(value)) {
+        return new Date(value);
+      }
+      return value;
+    });
+  },
+});
+```
+
+Source: [types/common.ts:307-340](~/workspace/source/packages/callapi/src/types/common.ts)
+
+## Skip Auto Merge
+
+Control configuration merging behavior:
+
+<Accordion title="Skip Auto Merge Options">
+
+**skipAutoMergeFor: "all"**
+
+Manually control all merging:
+
+```typescript
+const callApi = createFetchClient((ctx) => ({
+  skipAutoMergeFor: 'all',
+  
+  // Manually merge what you want
+  baseURL: ctx.options.baseURL,
+  timeout: 10000, // Override
+  headers: {
+    ...ctx.request.headers,
+    'X-Custom': 'value',
+  },
+}));
+```
+
+**skipAutoMergeFor: "options"**
+
+Manual control of extra options:
+
+```typescript
+const callApi = createFetchClient((ctx) => ({
+  skipAutoMergeFor: 'options',
+  
+  // Manually control plugins
+  plugins: [
+    ...ctx.options.plugins?.filter(p => p.name !== 'unwanted') || [],
+    customPlugin,
+  ],
+  
+  // Request options still auto-merge
+  method: 'POST',
+}));
+```
+
+**skipAutoMergeFor: "request"**
+
+Manual control of request options:
+
+```typescript
+const callApi = createFetchClient((ctx) => ({
+  skipAutoMergeFor: 'request',
+  
+  // Extra options still auto-merge
+  
+  // Manually control request
+  headers: {
+    'Content-Type': 'application/json',
+    // Base headers not merged
+  },
+  method: ctx.request.method || 'GET',
+}));
+```
+
+Source: [types/common.ts:523-589](~/workspace/source/packages/callapi/src/types/common.ts)
+
+</Accordion>
+
+## Metadata
+
+Attach custom metadata to requests:
+
+```typescript
+interface Register {
+  meta: {
+    userId?: string;
+    requestId?: string;
+    source?: string;
+  };
+}
+
+const callApi = createFetchClient({
+  baseURL: 'https://api.example.com',
+  
+  onRequest: ({ options }) => {
+    console.log('User:', options.meta?.userId);
+    console.log('Source:', options.meta?.source);
+  },
+});
+
+await callApi('/users', {
+  meta: {
+    userId: '123',
+    requestId: crypto.randomUUID(),
+    source: 'dashboard',
+  },
+});
+```
+
+Source: [types/common.ts:262-303](~/workspace/source/packages/callapi/src/types/common.ts)
+
+## Timeout Configuration
+
+Set request timeout limits:
+
+```typescript
+// Global timeout
+const callApi = createFetchClient({
+  timeout: 5000, // 5 seconds
+});
+
+// Per-request timeout
+await callApi('/quick', { timeout: 1000 });  // 1 second
+await callApi('/slow', { timeout: 30000 });  // 30 seconds
+
+// No timeout
+await callApi('/no-limit', { timeout: 0 });
+```
+
+Source: [types/common.ts:446-468](~/workspace/source/packages/callapi/src/types/common.ts)
+
+## Clone Response
+
+Enable response cloning for multiple reads:
+
+```typescript
+const callApi = createFetchClient({
+  baseURL: 'https://api.example.com',
+  cloneResponse: true,
+  
+  onSuccess: async ({ response }) => {
+    // First read: log raw text
+    const text = await response.text();
+    console.log('Raw response:', text);
+  },
+});
+
+// Second read: parse JSON in main code
+const { data } = await callApi('/users');
+console.log('Parsed data:', data);
+```
+
+Source: [types/common.ts:162-172](~/workspace/source/packages/callapi/src/types/common.ts)
+
+## Hook Execution Mode
+
+Control hook execution order:
+
+```typescript
+// Parallel execution (default, faster)
+const callApi = createFetchClient({
+  hooksExecutionMode: 'parallel',
+  
+  onRequest: [
+    async () => { /* Hook 1 */ },
+    async () => { /* Hook 2 */ },
+    async () => { /* Hook 3 */ },
+  ],
+});
+
+// Sequential execution (hooks depend on each other)
+const callApi = createFetchClient({
+  hooksExecutionMode: 'sequential',
+  
+  onRequest: [
+    async ({ request }) => {
+      // Hook 1: Get token
+      request.headers.Authorization = await getToken();
+    },
+    async ({ request }) => {
+      // Hook 2: Depends on authorization header
+      const perms = await validateToken(request.headers.Authorization);
+      request.headers['X-Permissions'] = perms;
+    },
+  ],
+});
+```
+
+Source: [hooks.ts:163-175](~/workspace/source/packages/callapi/src/hooks.ts)
+
+## Dynamic Configuration
+
+Compute configuration at runtime:
+
+```typescript
+const callApi = createFetchClient((ctx) => {
+  const isProtected = ctx.initURL.includes('/protected/');
+  const isDevelopment = process.env.NODE_ENV === 'development';
+  
+  return {
+    baseURL: 'https://api.example.com',
+    
+    // Add auth for protected routes
+    ...(isProtected && {
+      headers: {
+        Authorization: `Bearer ${getToken()}`,
+      },
+    }),
+    
+    // Enable logging in development
+    ...(isDevelopment && {
+      onRequest: ({ options }) => {
+        console.log('Request:', options.fullURL);
+      },
+    }),
+    
+    // Custom timeout based on route
+    timeout: isProtected ? 10000 : 5000,
+  };
+});
+```
+
+Source: [types/common.ts:683-704](~/workspace/source/packages/callapi/src/types/common.ts)
+
+## Best Practices
+
+<AccordionGroup>
+
+<Accordion title="Use Appropriate Result Modes">
+
+Choose the right result mode for your use case:
+
+```typescript
+// ✅ Good: Simple data fetching
+const users = await callApi('/users', {
+  resultMode: 'onlyData',
+});
+
+// ✅ Good: Need error handling
+const { data, error } = await callApi('/users', {
+  resultMode: 'withoutResponse',
+});
+
+// ✅ Good: Custom response handling
+const response = await callApi('/users', {
+  resultMode: 'fetchApi',
+});
+
+// ❌ Avoid: Unnecessary response object
+const { data, response } = await callApi('/users', {
+  resultMode: 'all', // Don't need response
+});
+```
+
+</Accordion>
+
+<Accordion title="Configure Retries Wisely">
+
+Retry safely:
+
+```typescript
+// ✅ Good: Retry idempotent operations
+const callApi = createFetchClient({
+  retryAttempts: 3,
+  retryMethods: ['GET'], // Safe to retry
+  retryStatusCodes: [429, 500, 502, 503],
+});
+
+// ⚠️ Caution: Retrying non-idempotent operations
+const callApi = createFetchClient({
+  retryAttempts: 3,
+  retryMethods: ['POST'], // May create duplicates!
+});
+```
+
+</Accordion>
+
+<Accordion title="Set Reasonable Timeouts">
+
+Balance responsiveness and reliability:
+
+```typescript
+// ✅ Good: Different timeouts for different endpoints
+const quickApi = createFetchClient({
+  baseURL: 'https://api.example.com',
+  timeout: 3000, // 3s for fast endpoints
+});
+
+const slowApi = createFetchClient({
+  baseURL: 'https://api.example.com',
+  timeout: 30000, // 30s for slow operations
+});
+
+// ❌ Bad: Same timeout for everything
+const callApi = createFetchClient({
+  timeout: 1000, // Too short for some operations
+});
+```
+
+</Accordion>
+
+<Accordion title="Use Dedupe for Expensive Operations">
+
+Prevent wasteful requests:
+
+```typescript
+// ✅ Good: Dedupe expensive queries
+const callApi = createFetchClient({
+  dedupeStrategy: 'defer',
+  dedupeKey: ({ options }) => options.fullURL,
+});
+
+// Multiple components can request same data
+const [users1, users2, users3] = await Promise.all([
+  callApi('/expensive-query'),
+  callApi('/expensive-query'),
+  callApi('/expensive-query'),
+]); // Only one actual request
+```
+
+</Accordion>
+
+</AccordionGroup>
+
+## Configuration Defaults
+
+Default values for configuration options:
+
+```typescript
+const defaults = {
+  // Response
+  responseType: 'json',
+  responseParser: JSON.parse,
+  resultMode: 'all',
+  
+  // Request
+  method: 'GET',
+  bodySerializer: JSON.stringify,
+  
+  // Error handling
+  throwOnError: false,
+  defaultHTTPErrorMessage: 'Request failed unexpectedly',
+  
+  // Retry
+  retryAttempts: 0,
+  retryDelay: 1000,
+  retryMaxDelay: 10000,
+  retryStrategy: 'linear',
+  retryMethods: ['GET', 'POST'],
+  retryStatusCodes: [],
+  
+  // Dedupe
+  dedupeStrategy: 'cancel',
+  dedupeCacheScope: 'local',
+  dedupeCacheScopeKey: 'default',
+  
+  // Hooks
+  hooksExecutionMode: 'parallel',
+};
+```
+
+Source: [constants/defaults.ts:5-37](~/workspace/source/packages/callapi/src/constants/defaults.ts)

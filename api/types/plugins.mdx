@@ -1,0 +1,560 @@
+---
+title: CallApiPlugin
+description: Plugin interface for extending CallApi functionality
+---
+
+## Overview
+
+The `CallApiPlugin` interface allows you to create reusable extensions for CallApi. Plugins can add hooks, middlewares, extra options, and schemas to modify request/response behavior across all requests.
+
+## Type Definition
+
+```typescript
+interface CallApiPlugin<TCallApiContext extends CallApiContext = DefaultCallApiContext> {
+  id: string;
+  name: string;
+  version?: string;
+  description?: string;
+  defineExtraOptions?: () => TCallApiContext['InferredExtraOptions'];
+  schema?: BaseCallApiSchemaAndConfig;
+  setup?: (context: PluginSetupContext) => Awaitable<PluginInitResult | void>;
+  hooks?: PluginHooks | ((context: PluginSetupContext) => Awaitable<PluginHooks | void>);
+  middlewares?: PluginMiddlewares | ((context: PluginSetupContext) => Awaitable<PluginMiddlewares | void>);
+}
+```
+
+## Required Properties
+
+<ParamField path="id" type="string" required>
+  A unique identifier for the plugin. Used to identify and deduplicate plugins.
+
+  ```typescript
+  id: 'my-plugin'
+  ```
+</ParamField>
+
+<ParamField path="name" type="string" required>
+  A human-readable name for the plugin.
+
+  ```typescript
+  name: 'My Custom Plugin'
+  ```
+</ParamField>
+
+## Optional Properties
+
+<ParamField path="version" type="string">
+  Version string for the plugin.
+
+  ```typescript
+  version: '1.0.0'
+  ```
+</ParamField>
+
+<ParamField path="description" type="string">
+  A description of what the plugin does.
+
+  ```typescript
+  description: 'Adds authentication and retry logic to all requests'
+  ```
+</ParamField>
+
+<ParamField path="defineExtraOptions" type="() => ExtraOptions">
+  Defines additional options that users can pass to callApi when using this plugin.
+
+  ```typescript
+  defineExtraOptions: () => ({
+    apiKey: undefined as string | undefined,
+    debug: false as boolean
+  })
+  ```
+
+  Users can then use these options:
+  ```typescript
+  await callApi('/users', {
+    apiKey: 'my-key',
+    debug: true
+  });
+  ```
+</ParamField>
+
+<ParamField path="schema" type="BaseCallApiSchemaAndConfig">
+  Base validation schemas for the plugin. Applies validation rules to requests/responses.
+
+  ```typescript
+  import { z } from 'zod';
+
+  schema: {
+    routes: {
+      '/users': {
+        response: z.array(z.object({
+          id: z.string(),
+          name: z.string()
+        }))
+      }
+    }
+  }
+  ```
+</ParamField>
+
+## Plugin Functions
+
+### setup
+
+<ParamField path="setup" type="(context: PluginSetupContext) => Awaitable<PluginInitResult | void>">
+  Called when the plugin is initialized, before any other plugin functions.
+
+  Can return modifications to the request, options, or URL:
+
+  ```typescript
+  setup: async ({ initURL, request, options, config, baseConfig }) => {
+    // Modify the URL
+    const newURL = initURL + '?plugin=active';
+    
+    // Modify request
+    const newRequest = {
+      ...request,
+      headers: {
+        ...request.headers,
+        'X-Plugin': 'active'
+      }
+    };
+    
+    // Modify options
+    const newOptions = {
+      ...options,
+      timeout: 10000
+    };
+    
+    return {
+      initURL: newURL,
+      request: newRequest,
+      options: newOptions
+    };
+  }
+  ```
+</ParamField>
+
+### hooks
+
+<ParamField path="hooks" type="PluginHooks | ((context: PluginSetupContext) => Awaitable<PluginHooks | void>)">
+  Lifecycle hooks for the plugin. Can be a static object or a function that returns hooks.
+
+  **Static hooks:**
+  ```typescript
+  hooks: {
+    onRequest: ({ request }) => {
+      console.log('Plugin request hook');
+    },
+    onSuccess: ({ data }) => {
+      console.log('Plugin success hook:', data);
+    }
+  }
+  ```
+
+  **Dynamic hooks:**
+  ```typescript
+  hooks: ({ options }) => {
+    if (!options.meta?.enablePlugin) {
+      return; // No hooks if plugin disabled
+    }
+    
+    return {
+      onRequest: ({ request }) => {
+        console.log('Dynamic plugin hook');
+      }
+    };
+  }
+  ```
+</ParamField>
+
+### middlewares
+
+<ParamField path="middlewares" type="PluginMiddlewares | ((context: PluginSetupContext) => Awaitable<PluginMiddlewares | void>)">
+  Fetch middlewares for the plugin. Can be a static object or a function that returns middlewares.
+
+  ```typescript
+  middlewares: {
+    fetchMiddleware: ({ fetchImpl }) => async (input, init) => {
+      console.log('Plugin middleware intercept');
+      const response = await fetchImpl(input, init);
+      return response;
+    }
+  }
+  ```
+</ParamField>
+
+## Plugin Setup Context
+
+The setup context provides access to the current request configuration:
+
+<ParamField path="initURL" type="string" required>
+  The initial URL for the request.
+</ParamField>
+
+<ParamField path="baseConfig" type="BaseCallApiConfig" required>
+  Base configuration from createFetchClient.
+</ParamField>
+
+<ParamField path="config" type="CallApiConfig" required>
+  Instance-specific configuration.
+</ParamField>
+
+<ParamField path="options" type="CallApiExtraOptions" required>
+  Merged extra options.
+</ParamField>
+
+<ParamField path="request" type="CallApiRequestOptions" required>
+  Request options (method, headers, body, etc.).
+</ParamField>
+
+## Plugin Init Result
+
+The setup function can return modifications:
+
+```typescript
+type PluginInitResult = {
+  initURL?: InitURLOrURLObject;
+  request?: Partial<CallApiRequestOptions>;
+  options?: Partial<CallApiExtraOptions>;
+  baseConfig?: Partial<BaseCallApiConfig>;
+  config?: Partial<CallApiConfig>;
+}
+```
+
+## Examples
+
+### Simple Logger Plugin
+
+```typescript
+import type { CallApiPlugin } from 'callapi';
+
+const loggerPlugin = (): CallApiPlugin => ({
+  id: 'logger',
+  name: 'Logger Plugin',
+  version: '1.0.0',
+  description: 'Logs all requests and responses',
+  
+  hooks: {
+    onRequest: ({ request }) => {
+      console.log('→', request.method, request.url);
+    },
+    onResponse: ({ response }) => {
+      console.log('←', response.status, response.url);
+    },
+    onError: ({ error }) => {
+      console.error('✗', error.message);
+    }
+  }
+});
+
+// Usage
+const api = createFetchClient({
+  baseURL: 'https://api.example.com',
+  plugins: [loggerPlugin()]
+});
+```
+
+### API Key Plugin
+
+```typescript
+interface ApiKeyPluginOptions {
+  apiKey: string;
+  headerName?: string;
+}
+
+const apiKeyPlugin = (options: ApiKeyPluginOptions): CallApiPlugin => ({
+  id: 'api-key',
+  name: 'API Key Plugin',
+  description: 'Adds API key to request headers',
+  
+  defineExtraOptions: () => ({
+    apiKey: undefined as string | undefined
+  }),
+  
+  hooks: {
+    onRequest: ({ request, options: reqOptions }) => {
+      const apiKey = reqOptions.apiKey || options.apiKey;
+      const headerName = options.headerName || 'X-API-Key';
+      
+      if (apiKey) {
+        request.headers[headerName] = apiKey;
+      }
+    }
+  }
+});
+
+// Usage
+const api = createFetchClient({
+  baseURL: 'https://api.example.com',
+  plugins: [apiKeyPlugin({ apiKey: 'secret-key' })]
+});
+
+// Can override per request
+await api('/users', { apiKey: 'different-key' });
+```
+
+### Retry Plugin
+
+```typescript
+interface RetryPluginOptions {
+  maxRetries?: number;
+  retryDelay?: number;
+  retryOn?: number[];
+}
+
+const retryPlugin = (options: RetryPluginOptions = {}): CallApiPlugin => {
+  const {
+    maxRetries = 3,
+    retryDelay = 1000,
+    retryOn = [408, 429, 500, 502, 503, 504]
+  } = options;
+  
+  return {
+    id: 'retry',
+    name: 'Retry Plugin',
+    description: 'Automatically retries failed requests',
+    
+    setup: () => ({
+      options: {
+        retry: maxRetries
+      }
+    }),
+    
+    hooks: {
+      onRetry: async ({ error, retryAttemptCount, response }) => {
+        console.log(`Retry attempt ${retryAttemptCount}/${maxRetries}`);
+        
+        // Don't retry if status not in retryOn list
+        if (response?.status && !retryOn.includes(response.status)) {
+          throw error; // Stop retrying
+        }
+        
+        // Wait before retrying
+        const delay = retryDelay * Math.pow(2, retryAttemptCount - 1);
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
+    }
+  };
+};
+
+// Usage
+const api = createFetchClient({
+  baseURL: 'https://api.example.com',
+  plugins: [retryPlugin({ maxRetries: 5 })]
+});
+```
+
+### Cache Plugin
+
+```typescript
+interface CachePluginOptions {
+  ttl?: number; // Time to live in milliseconds
+}
+
+const cachePlugin = (options: CachePluginOptions = {}): CallApiPlugin => {
+  const { ttl = 60000 } = options; // 1 minute default
+  const cache = new Map<string, { data: any; timestamp: number }>();
+  
+  return {
+    id: 'cache',
+    name: 'Cache Plugin',
+    description: 'Caches GET request responses',
+    
+    middlewares: {
+      fetchMiddleware: ({ fetchImpl }) => async (input, init) => {
+        const url = input.toString();
+        const method = init?.method || 'GET';
+        
+        // Only cache GET requests
+        if (method.toUpperCase() !== 'GET') {
+          return fetchImpl(input, init);
+        }
+        
+        // Check cache
+        const cached = cache.get(url);
+        if (cached && Date.now() - cached.timestamp < ttl) {
+          console.log('Cache hit:', url);
+          return new Response(JSON.stringify(cached.data), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' }
+          });
+        }
+        
+        // Fetch and cache
+        const response = await fetchImpl(input, init);
+        
+        if (response.ok) {
+          const clone = response.clone();
+          const data = await clone.json();
+          cache.set(url, { data, timestamp: Date.now() });
+        }
+        
+        return response;
+      }
+    }
+  };
+};
+
+// Usage
+const api = createFetchClient({
+  baseURL: 'https://api.example.com',
+  plugins: [cachePlugin({ ttl: 120000 })] // 2 minute cache
+});
+```
+
+### Analytics Plugin
+
+```typescript
+interface AnalyticsPluginOptions {
+  trackingId: string;
+  enabled?: boolean;
+}
+
+const analyticsPlugin = (options: AnalyticsPluginOptions): CallApiPlugin => ({
+  id: 'analytics',
+  name: 'Analytics Plugin',
+  description: 'Tracks API usage and performance',
+  
+  hooks: ({ options: reqOptions }) => {
+    if (!options.enabled) return;
+    
+    return {
+      onRequest: ({ request, options }) => {
+        options.meta = {
+          ...options.meta,
+          analyticsStart: Date.now()
+        };
+      },
+      
+      onSuccess: ({ data, response, options: reqOptions }) => {
+        const duration = Date.now() - reqOptions.meta?.analyticsStart;
+        
+        analytics.track('api_success', {
+          trackingId: options.trackingId,
+          endpoint: response.url,
+          method: response.method,
+          status: response.status,
+          duration
+        });
+      },
+      
+      onError: ({ error, response, options: reqOptions }) => {
+        const duration = Date.now() - reqOptions.meta?.analyticsStart;
+        
+        analytics.track('api_error', {
+          trackingId: options.trackingId,
+          endpoint: response?.url,
+          error: error.name,
+          status: response?.status,
+          duration
+        });
+      }
+    };
+  }
+});
+
+// Usage
+const api = createFetchClient({
+  baseURL: 'https://api.example.com',
+  plugins: [
+    analyticsPlugin({ 
+      trackingId: 'UA-12345',
+      enabled: true 
+    })
+  ]
+});
+```
+
+### Auth Plugin with Token Refresh
+
+```typescript
+interface AuthPluginOptions {
+  getToken: () => string | Promise<string>;
+  refreshToken: () => Promise<string>;
+  shouldRefresh?: (response: Response) => boolean;
+}
+
+const authPlugin = (options: AuthPluginOptions): CallApiPlugin => {
+  let currentToken: string | null = null;
+  
+  return {
+    id: 'auth',
+    name: 'Auth Plugin',
+    description: 'Handles authentication with automatic token refresh',
+    
+    hooks: {
+      onRequest: async ({ request }) => {
+        if (!currentToken) {
+          currentToken = await options.getToken();
+        }
+        request.headers['Authorization'] = `Bearer ${currentToken}`;
+      },
+      
+      onResponseError: async ({ response, error }) => {
+        const shouldRefresh = options.shouldRefresh?.(response) ?? response.status === 401;
+        
+        if (shouldRefresh) {
+          console.log('Refreshing auth token...');
+          currentToken = await options.refreshToken();
+        }
+      }
+    }
+  };
+};
+
+// Usage
+const api = createFetchClient({
+  baseURL: 'https://api.example.com',
+  plugins: [
+    authPlugin({
+      getToken: () => localStorage.getItem('token') || '',
+      refreshToken: async () => {
+        const response = await fetch('/auth/refresh', {
+          method: 'POST',
+          credentials: 'include'
+        });
+        const { token } = await response.json();
+        localStorage.setItem('token', token);
+        return token;
+      }
+    })
+  ]
+});
+```
+
+## Using Plugins
+
+### Base Plugins
+
+Add plugins to the base client configuration:
+
+```typescript
+const api = createFetchClient({
+  baseURL: 'https://api.example.com',
+  plugins: [
+    loggerPlugin(),
+    retryPlugin({ maxRetries: 3 }),
+    cachePlugin({ ttl: 60000 })
+  ]
+});
+```
+
+### Instance Plugins
+
+Add plugins to specific instances:
+
+```typescript
+const adminApi = api.create({
+  plugins: ({ basePlugins }) => [
+    ...basePlugins,
+    authPlugin({ apiKey: 'admin-key' })
+  ]
+});
+```
+
+## See Also
+
+- [Hooks](/api/types/hooks) - Lifecycle hooks that plugins can use
+- [Middlewares](/api/types/middlewares) - Fetch middleware interface
+- [CallApiExtraOptions](/api/config/extra-options) - Configuration options

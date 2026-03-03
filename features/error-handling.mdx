@@ -1,0 +1,325 @@
+---
+title: 'Error Handling'
+description: 'Comprehensive error handling with HTTPError and ValidationError'
+---
+
+## Overview
+
+CallApi provides robust error handling through two specialized error classes: `HTTPError` for server-side errors and `ValidationError` for schema validation failures. Both error types extend the native JavaScript `Error` class and include detailed contextual information.
+
+## Error Types
+
+### HTTPError
+
+Thrown when the server responds with an error status code (4xx or 5xx). Contains the response object and parsed error data.
+
+<ParamField path="name" type="string" default="HTTPError">
+  Always set to `"HTTPError"` for type checking
+</ParamField>
+
+<ParamField path="message" type="string">
+  Error message extracted from `errorData.message`, falling back to response `statusText` or the default HTTP error message
+</ParamField>
+
+<ParamField path="errorData" type="TErrorData">
+  Parsed error response body from the server. Type can be customized via generics.
+</ParamField>
+
+<ParamField path="response" type="Response">
+  The original Response object from the failed request
+</ParamField>
+
+```typescript error.ts
+class HTTPError<TErrorData = Record<string, unknown>> extends Error {
+  readonly name = "HTTPError" as const;
+  errorData: TErrorData;
+  response: Response;
+
+  constructor(errorDetails: HTTPErrorDetails<TErrorData>) {
+    const { errorData, response, defaultHTTPErrorMessage } = errorDetails;
+    
+    const message = 
+      errorData?.message ?? 
+      defaultHTTPErrorMessage ?? 
+      response.statusText ?? 
+      "HTTP Error";
+    
+    super(message);
+    this.errorData = errorData;
+    this.response = response;
+  }
+
+  static isError<TErrorData>(error: unknown): error is HTTPError<TErrorData> {
+    return error instanceof HTTPError;
+  }
+}
+```
+
+### ValidationError
+
+Thrown when request/response validation fails against your schema. Includes detailed information about which fields failed and why.
+
+<ParamField path="name" type="string" default="ValidationError">
+  Always set to `"ValidationError"`
+</ParamField>
+
+<ParamField path="message" type="string">
+  Formatted error message showing all validation issues with their paths
+</ParamField>
+
+<ParamField path="errorData" type="readonly StandardSchemaV1.Issue[]">
+  Array of validation issues with detailed field paths and messages
+</ParamField>
+
+<ParamField path="issueCause" type="string">
+  The schema field that caused the validation error: `"body"`, `"query"`, `"params"`, `"data"`, `"errorData"`, etc.
+</ParamField>
+
+<ParamField path="response" type="Response | null">
+  The Response object if validation failed on response data, otherwise `null`
+</ParamField>
+
+```typescript error.ts
+class ValidationError extends Error {
+  readonly name = "ValidationError" as const;
+  errorData: readonly StandardSchemaV1.Issue[];
+  issueCause: keyof CallApiSchema | "unknown";
+  response: Response | null;
+
+  constructor(details: ValidationErrorDetails) {
+    const { issueCause, issues, response } = details;
+    const prettyMessage = prettifyValidationIssues(issues);
+    super(`(${issueCause.toUpperCase()}) - ${prettyMessage}`);
+    
+    this.errorData = issues;
+    this.issueCause = issueCause;
+    this.response = response;
+  }
+
+  static isError(error: unknown): error is ValidationError {
+    return error instanceof ValidationError;
+  }
+}
+```
+
+## Usage Examples
+
+### Handling HTTPError
+
+```typescript
+import { callApi } from "@zayne-labs/callapi";
+import { HTTPError } from "@zayne-labs/callapi/error";
+
+type ErrorResponse = {
+  message: string;
+  code: string;
+  details?: Record<string, unknown>;
+};
+
+try {
+  const { data } = await callApi<UserData, ErrorResponse>("/api/user/123", {
+    throwOnError: true
+  });
+  console.log(data);
+} catch (error) {
+  if (HTTPError.isError<ErrorResponse>(error)) {
+    console.error("HTTP Error:", error.message);
+    console.error("Status:", error.response.status);
+    console.error("Error code:", error.errorData.code);
+    console.error("Details:", error.errorData.details);
+  }
+}
+```
+
+### Handling ValidationError
+
+```typescript
+import { callApi } from "@zayne-labs/callapi";
+import { ValidationError } from "@zayne-labs/callapi/error";
+import { z } from "zod";
+
+const userSchema = z.object({
+  name: z.string().min(3),
+  email: z.string().email(),
+  age: z.number().positive()
+});
+
+try {
+  const { data } = await callApi("/api/users", {
+    method: "POST",
+    body: { name: "Jo", email: "invalid", age: -5 },
+    schema: {
+      body: userSchema
+    },
+    throwOnError: true
+  });
+} catch (error) {
+  if (ValidationError.isError(error)) {
+    console.error("Validation failed:", error.issueCause);
+    
+    // Access detailed validation issues
+    error.errorData.forEach(issue => {
+      console.error(`- ${issue.message}`);
+      if (issue.path) {
+        console.error(`  at: ${issue.path.join(".")}`);
+      }
+    });
+  }
+}
+```
+
+### Handling Both Error Types
+
+```typescript
+import { callApi } from "@zayne-labs/callapi";
+import { HTTPError, ValidationError } from "@zayne-labs/callapi/error";
+
+async function fetchUser(userId: string) {
+  try {
+    const { data } = await callApi(`/api/users/${userId}`, {
+      throwOnError: true
+    });
+    return data;
+  } catch (error) {
+    if (HTTPError.isError(error)) {
+      // Handle HTTP errors (4xx, 5xx)
+      if (error.response.status === 404) {
+        console.error("User not found");
+      } else if (error.response.status >= 500) {
+        console.error("Server error:", error.message);
+      }
+    } else if (ValidationError.isError(error)) {
+      // Handle validation errors
+      console.error("Invalid response data:", error.message);
+    } else {
+      // Handle other errors (network, timeout, etc.)
+      console.error("Request failed:", error);
+    }
+    throw error;
+  }
+}
+```
+
+### Without Throwing (Result Object)
+
+```typescript
+const result = await callApi("/api/user/123", {
+  throwOnError: false // default
+});
+
+if (result.error) {
+  // TypeScript knows this is an error variant
+  console.error("Error name:", result.error.name);
+  console.error("Error message:", result.error.message);
+  
+  // Check error type
+  if (result.error.name === "HTTPError") {
+    console.error("HTTP error data:", result.error.errorData);
+    console.error("Status:", result.response?.status);
+  } else if (result.error.name === "ValidationError") {
+    console.error("Validation issues:", result.error.errorData);
+    console.error("Failed on:", result.error.issueCause);
+  }
+} else {
+  // TypeScript knows data is available
+  console.log("Success:", result.data);
+}
+```
+
+## Custom Error Messages
+
+### Default HTTP Error Messages
+
+Customize the default error message for HTTP errors:
+
+```typescript
+const client = createFetchClient({
+  baseURL: "https://api.example.com",
+  defaultHTTPErrorMessage: "Request failed. Please try again."
+});
+
+// Or with a function
+const client = createFetchClient({
+  baseURL: "https://api.example.com",
+  defaultHTTPErrorMessage: ({ response, errorData }) => {
+    if (response.status === 429) {
+      return "Too many requests. Please slow down.";
+    }
+    return errorData.message || "An error occurred";
+  }
+});
+```
+
+### Per-Request Error Messages
+
+```typescript
+const { data, error } = await callApi("/api/data", {
+  defaultHTTPErrorMessage: "Failed to load data"
+});
+
+if (error) {
+  // Will use custom message if error.errorData.message is not available
+  console.error(error.message);
+}
+```
+
+## Error Handling Best Practices
+
+<Tip>
+**Type-Safe Error Handling**: Use TypeScript generics to specify your error data type for full type safety:
+
+```typescript
+type ApiError = { code: string; message: string };
+const result = await callApi<UserData, ApiError>("/api/user");
+```
+</Tip>
+
+<Warning>
+**Always Check Error Names**: Use the `name` property or static `isError` methods to identify error types. Don't rely on `instanceof` checks across module boundaries.
+</Warning>
+
+<Note>
+**Access Full Response**: Both error types include the `response` object (when available), giving you access to headers, status codes, and other response metadata.
+</Note>
+
+## Common Error Scenarios
+
+### Network Errors
+
+```typescript
+try {
+  const { data } = await callApi("/api/data", {
+    throwOnError: true
+  });
+} catch (error) {
+  if (error.name === "TypeError") {
+    console.error("Network error - check your connection");
+  } else if (error.name === "AbortError") {
+    console.error("Request was cancelled");
+  } else if (error.name === "TimeoutError") {
+    console.error("Request timed out");
+  }
+}
+```
+
+### Abort/Timeout Errors
+
+```typescript
+const controller = new AbortController();
+
+setTimeout(() => controller.abort(), 5000);
+
+const result = await callApi("/api/long-request", {
+  signal: controller.signal
+});
+
+if (result.error?.name === "AbortError") {
+  console.log("Request was aborted");
+}
+```
+
+## Related
+
+- [Retries & Timeout](/features/retries-and-timeout) - Configure automatic retry on errors
+- [Response Parsing](/features/response-parsing) - Control how responses are parsed
+- [Request Deduplication](/features/request-deduplication) - Handle duplicate request errors

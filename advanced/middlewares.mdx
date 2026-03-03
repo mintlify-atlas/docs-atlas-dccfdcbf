@@ -1,0 +1,699 @@
+---
+title: 'Middleware System'
+description: 'Intercept and modify fetch calls at the network layer'
+icon: 'layer-group'
+---
+
+## Overview
+
+Middleware in CallApi wraps the fetch implementation to intercept requests at the network layer. Unlike hooks that run before/after requests, middleware can modify, cache, or completely replace the fetch call itself.
+
+## Fetch Middleware
+
+CallApi provides a single powerful middleware type: `fetchMiddleware`.
+
+```typescript
+interface Middlewares {
+  fetchMiddleware?: (context: FetchMiddlewareContext) => FetchImpl;
+}
+
+interface FetchMiddlewareContext extends RequestContext {
+  fetchImpl: FetchImpl; // Current fetch implementation
+}
+
+type FetchImpl = (
+  input: string | Request | URL,
+  init?: RequestInit
+) => Promise<Response>;
+```
+
+Source: [middlewares.ts:6-56](~/workspace/source/packages/callapi/src/middlewares.ts)
+
+## How It Works
+
+Middleware receives the current fetch function and returns a new one:
+
+```typescript
+fetchMiddleware: (ctx) => {
+  // ctx.fetchImpl is the current fetch function
+  
+  return async (input, init) => {
+    // Do something before
+    console.log('Before fetch:', input);
+    
+    // Call the original fetch
+    const response = await ctx.fetchImpl(input, init);
+    
+    // Do something after
+    console.log('After fetch:', response.status);
+    
+    return response;
+  };
+}
+```
+
+## Basic Usage
+
+### Simple Logging Middleware
+
+```typescript
+import { createFetchClient } from 'callapi';
+
+const callApi = createFetchClient({
+  baseURL: 'https://api.example.com',
+  
+  fetchMiddleware: (ctx) => async (input, init) => {
+    const start = Date.now();
+    
+    console.log(`→ ${init?.method || 'GET'} ${input}`);
+    
+    const response = await ctx.fetchImpl(input, init);
+    
+    const duration = Date.now() - start;
+    console.log(`← ${response.status} (${duration}ms)`);
+    
+    return response;
+  },
+});
+```
+
+### Cache Middleware
+
+Cache GET requests in memory:
+
+```typescript
+const cache = new Map<string, Response>();
+
+const callApi = createFetchClient({
+  baseURL: 'https://api.example.com',
+  
+  fetchMiddleware: (ctx) => async (input, init) => {
+    const key = input.toString();
+    const method = init?.method || 'GET';
+    
+    // Only cache GET requests
+    if (method !== 'GET') {
+      return ctx.fetchImpl(input, init);
+    }
+    
+    // Check cache
+    const cached = cache.get(key);
+    if (cached) {
+      console.log('Cache hit:', key);
+      return cached.clone();
+    }
+    
+    // Fetch and cache
+    const response = await ctx.fetchImpl(input, init);
+    cache.set(key, response.clone());
+    
+    return response;
+  },
+});
+```
+
+### Offline Mode Middleware
+
+Handle offline scenarios gracefully:
+
+```typescript
+const callApi = createFetchClient({
+  baseURL: 'https://api.example.com',
+  
+  fetchMiddleware: (ctx) => async (input, init) => {
+    // Check if online
+    if (!navigator.onLine) {
+      console.warn('Device is offline');
+      
+      // Return offline response
+      return new Response(
+        JSON.stringify({ error: 'No internet connection' }),
+        {
+          status: 503,
+          statusText: 'Service Unavailable',
+          headers: { 'Content-Type': 'application/json' },
+        }
+      );
+    }
+    
+    return ctx.fetchImpl(input, init);
+  },
+});
+```
+
+## Common Use Cases
+
+### Request Mocking
+
+Mock specific endpoints for testing:
+
+```typescript
+const mockData = {
+  '/users': { id: 1, name: 'John Doe' },
+  '/posts': [{ id: 1, title: 'Test Post' }],
+};
+
+const callApi = createFetchClient({
+  baseURL: 'https://api.example.com',
+  
+  fetchMiddleware: (ctx) => async (input, init) => {
+    const url = new URL(input.toString());
+    const mockResponse = mockData[url.pathname];
+    
+    // Return mock data if available
+    if (mockResponse && process.env.NODE_ENV === 'test') {
+      return new Response(JSON.stringify(mockResponse), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    
+    return ctx.fetchImpl(input, init);
+  },
+});
+```
+
+### Rate Limiting
+
+Implement client-side rate limiting:
+
+```typescript
+class RateLimiter {
+  private queue: Array<() => void> = [];
+  private pending = 0;
+  
+  constructor(private maxConcurrent: number) {}
+  
+  async acquire(): Promise<void> {
+    if (this.pending < this.maxConcurrent) {
+      this.pending++;
+      return;
+    }
+    
+    await new Promise<void>((resolve) => {
+      this.queue.push(resolve);
+    });
+    this.pending++;
+  }
+  
+  release(): void {
+    this.pending--;
+    const next = this.queue.shift();
+    if (next) next();
+  }
+}
+
+const limiter = new RateLimiter(5); // Max 5 concurrent requests
+
+const callApi = createFetchClient({
+  baseURL: 'https://api.example.com',
+  
+  fetchMiddleware: (ctx) => async (input, init) => {
+    await limiter.acquire();
+    
+    try {
+      return await ctx.fetchImpl(input, init);
+    } finally {
+      limiter.release();
+    }
+  },
+});
+```
+
+### Request Modification
+
+Modify requests before sending:
+
+```typescript
+const callApi = createFetchClient({
+  baseURL: 'https://api.example.com',
+  
+  fetchMiddleware: (ctx) => async (input, init) => {
+    // Add timestamp to all requests
+    const url = new URL(input.toString());
+    url.searchParams.set('_t', Date.now().toString());
+    
+    // Add custom headers
+    const headers = new Headers(init?.headers);
+    headers.set('X-Client-Version', '1.0.0');
+    headers.set('X-Request-ID', crypto.randomUUID());
+    
+    return ctx.fetchImpl(url.toString(), {
+      ...init,
+      headers,
+    });
+  },
+});
+```
+
+### Response Transformation
+
+Modify responses before they reach hooks:
+
+```typescript
+const callApi = createFetchClient({
+  baseURL: 'https://api.example.com',
+  
+  fetchMiddleware: (ctx) => async (input, init) => {
+    const response = await ctx.fetchImpl(input, init);
+    
+    // Unwrap envelope responses
+    if (response.ok) {
+      const data = await response.json();
+      
+      // If response has envelope structure, unwrap it
+      if (data.success && data.result) {
+        return new Response(JSON.stringify(data.result), {
+          status: response.status,
+          statusText: response.statusText,
+          headers: response.headers,
+        });
+      }
+    }
+    
+    return response;
+  },
+});
+```
+
+### Circuit Breaker
+
+Implement circuit breaker pattern:
+
+```typescript
+class CircuitBreaker {
+  private failures = 0;
+  private lastFailTime = 0;
+  private state: 'closed' | 'open' | 'half-open' = 'closed';
+  
+  constructor(
+    private threshold = 5,
+    private timeout = 60000
+  ) {}
+  
+  async call<T>(fn: () => Promise<T>): Promise<T> {
+    if (this.state === 'open') {
+      if (Date.now() - this.lastFailTime > this.timeout) {
+        this.state = 'half-open';
+      } else {
+        throw new Error('Circuit breaker is OPEN');
+      }
+    }
+    
+    try {
+      const result = await fn();
+      this.onSuccess();
+      return result;
+    } catch (error) {
+      this.onFailure();
+      throw error;
+    }
+  }
+  
+  private onSuccess() {
+    this.failures = 0;
+    this.state = 'closed';
+  }
+  
+  private onFailure() {
+    this.failures++;
+    this.lastFailTime = Date.now();
+    
+    if (this.failures >= this.threshold) {
+      this.state = 'open';
+    }
+  }
+}
+
+const breaker = new CircuitBreaker();
+
+const callApi = createFetchClient({
+  baseURL: 'https://api.example.com',
+  
+  fetchMiddleware: (ctx) => async (input, init) => {
+    return breaker.call(() => ctx.fetchImpl(input, init));
+  },
+});
+```
+
+## Middleware Composition
+
+Multiple middleware functions compose in order:
+
+```typescript
+const callApi = createFetchClient({
+  baseURL: 'https://api.example.com',
+  plugins: [
+    // Plugin middleware runs first
+    loggingPlugin,
+    cachingPlugin,
+  ],
+  
+  // Base middleware runs after plugin middleware
+  fetchMiddleware: (ctx) => async (input, init) => {
+    // This wraps plugin middleware
+    return ctx.fetchImpl(input, init);
+  },
+});
+
+// Per-request middleware runs last
+await callApi('/users', {
+  fetchMiddleware: (ctx) => async (input, init) => {
+    // This wraps everything
+    return ctx.fetchImpl(input, init);
+  },
+});
+```
+
+Execution order:
+1. Per-request middleware (outermost)
+2. Base config middleware
+3. Plugin middleware (in registration order)
+4. Native fetch (innermost)
+
+Source: [middlewares.ts:72-96](~/workspace/source/packages/callapi/src/middlewares.ts)
+
+## Context Access
+
+Middleware receives the full request context:
+
+```typescript
+fetchMiddleware: (ctx) => {
+  // Access base configuration
+  console.log('Base URL:', ctx.baseConfig.baseURL);
+  
+  // Access instance configuration
+  console.log('Timeout:', ctx.config.timeout);
+  
+  // Access merged options
+  console.log('Full URL:', ctx.options.fullURL);
+  console.log('Meta:', ctx.options.meta);
+  
+  // Access request object
+  console.log('Method:', ctx.request.method);
+  console.log('Headers:', ctx.request.headers);
+  
+  return ctx.fetchImpl;
+}
+```
+
+## Advanced Patterns
+
+### Conditional Middleware
+
+Apply middleware logic conditionally:
+
+```typescript
+fetchMiddleware: (ctx) => async (input, init) => {
+  const url = new URL(input.toString());
+  
+  // Only cache specific endpoints
+  if (url.pathname.startsWith('/api/static/')) {
+    return cacheMiddleware(ctx)(input, init);
+  }
+  
+  // Only log in development
+  if (process.env.NODE_ENV === 'development') {
+    console.log('Request:', url.pathname);
+  }
+  
+  return ctx.fetchImpl(input, init);
+}
+```
+
+### Middleware Factory
+
+Create reusable middleware:
+
+```typescript
+function createCacheMiddleware(ttl: number) {
+  const cache = new Map();
+  
+  return (ctx: FetchMiddlewareContext) => async (
+    input: string | Request | URL,
+    init?: RequestInit
+  ) => {
+    const key = input.toString();
+    const cached = cache.get(key);
+    
+    if (cached && Date.now() - cached.time < ttl) {
+      return cached.response.clone();
+    }
+    
+    const response = await ctx.fetchImpl(input, init);
+    
+    cache.set(key, {
+      response: response.clone(),
+      time: Date.now(),
+    });
+    
+    return response;
+  };
+}
+
+// Use the factory
+const callApi = createFetchClient({
+  baseURL: 'https://api.example.com',
+  fetchMiddleware: createCacheMiddleware(60000), // 1 minute TTL
+});
+```
+
+### Error Recovery
+
+Handle and recover from errors:
+
+```typescript
+fetchMiddleware: (ctx) => async (input, init) => {
+  try {
+    return await ctx.fetchImpl(input, init);
+  } catch (error) {
+    console.error('Fetch failed:', error);
+    
+    // Try backup server
+    if (error instanceof TypeError) {
+      const backupUrl = input.toString().replace(
+        'api.example.com',
+        'backup.example.com'
+      );
+      
+      return ctx.fetchImpl(backupUrl, init);
+    }
+    
+    throw error;
+  }
+}
+```
+
+### Request Deduplication
+
+Prevent duplicate concurrent requests:
+
+```typescript
+const pendingRequests = new Map<string, Promise<Response>>();
+
+fetchMiddleware: (ctx) => async (input, init) => {
+  const key = input.toString() + JSON.stringify(init);
+  
+  // Return existing request if pending
+  const pending = pendingRequests.get(key);
+  if (pending) {
+    console.log('Deduping request:', key);
+    return pending.then(r => r.clone());
+  }
+  
+  // Create new request
+  const promise = ctx.fetchImpl(input, init);
+  pendingRequests.set(key, promise);
+  
+  try {
+    const response = await promise;
+    return response;
+  } finally {
+    pendingRequests.delete(key);
+  }
+}
+```
+
+<Note>
+CallApi has built-in request deduplication. See the dedupe configuration for a more robust solution.
+</Note>
+
+## Middleware vs Hooks
+
+<AccordionGroup>
+
+<Accordion title="When to Use Middleware">
+
+Use middleware when you need to:
+
+- Modify or replace the fetch call itself
+- Cache responses at the network layer
+- Implement request pooling or rate limiting
+- Mock entire API endpoints
+- Transform responses before parsing
+- Implement circuit breakers
+
+```typescript
+// ✅ Good use of middleware: Response caching
+fetchMiddleware: (ctx) => async (input, init) => {
+  const cached = getFromCache(input);
+  if (cached) return cached;
+  
+  const response = await ctx.fetchImpl(input, init);
+  saveToCache(input, response.clone());
+  
+  return response;
+}
+```
+
+</Accordion>
+
+<Accordion title="When to Use Hooks">
+
+Use hooks when you need to:
+
+- Add authentication headers
+- Log requests/responses
+- Handle errors
+- Track progress
+- Validate data
+- Modify parsed data
+
+```typescript
+// ✅ Good use of hook: Authentication
+onRequest: ({ request }) => {
+  request.headers.Authorization = `Bearer ${token}`;
+}
+```
+
+</Accordion>
+
+<Accordion title="Comparison">
+
+| Feature | Middleware | Hooks |
+|---------|-----------|-------|
+| Timing | Around fetch call | Before/after fetch |
+| Can modify fetch | Yes | No |
+| Can access parsed data | No | Yes |
+| Can cache responses | Yes | Limited |
+| Multiple instances | Compose | Array |
+| Async support | Yes | Yes |
+
+</Accordion>
+
+</AccordionGroup>
+
+## Best Practices
+
+<AccordionGroup>
+
+<Accordion title="Always Call ctx.fetchImpl">
+
+Ensure you call the original fetch implementation:
+
+```typescript
+// ❌ Bad: Breaks the middleware chain
+fetchMiddleware: (ctx) => async (input, init) => {
+  return fetch(input, init); // Bypasses other middleware!
+}
+
+// ✅ Good: Calls through the chain
+fetchMiddleware: (ctx) => async (input, init) => {
+  return ctx.fetchImpl(input, init);
+}
+```
+
+</Accordion>
+
+<Accordion title="Clone Responses When Caching">
+
+Response bodies can only be read once:
+
+```typescript
+// ❌ Bad: Response already consumed
+fetchMiddleware: (ctx) => async (input, init) => {
+  const response = await ctx.fetchImpl(input, init);
+  cache.set(key, response);
+  return response; // Error: body already read!
+}
+
+// ✅ Good: Clone the response
+fetchMiddleware: (ctx) => async (input, init) => {
+  const response = await ctx.fetchImpl(input, init);
+  cache.set(key, response.clone());
+  return response;
+}
+```
+
+</Accordion>
+
+<Accordion title="Handle Errors Gracefully">
+
+Don't let middleware errors crash requests:
+
+```typescript
+fetchMiddleware: (ctx) => async (input, init) => {
+  try {
+    // Try cache first
+    const cached = await getFromCache(input);
+    if (cached) return cached;
+  } catch (error) {
+    // Log but continue
+    console.error('Cache error:', error);
+  }
+  
+  // Always fall back to actual fetch
+  return ctx.fetchImpl(input, init);
+}
+```
+
+</Accordion>
+
+<Accordion title="Keep Middleware Focused">
+
+Each middleware should have a single responsibility:
+
+```typescript
+// ❌ Bad: Too many responsibilities
+fetchMiddleware: (ctx) => async (input, init) => {
+  // Caching AND logging AND retries AND...
+}
+
+// ✅ Good: Separate concerns
+const callApi = createFetchClient({
+  plugins: [
+    cachePlugin,
+    loggerPlugin,
+    retryPlugin,
+  ],
+});
+```
+
+</Accordion>
+
+</AccordionGroup>
+
+## TypeScript Support
+
+Middleware is fully typed:
+
+```typescript
+import type { FetchMiddlewareContext, FetchImpl } from 'callapi';
+
+const myMiddleware = (
+  ctx: FetchMiddlewareContext
+): FetchImpl => {
+  return async (input, init) => {
+    // TypeScript knows the types
+    return ctx.fetchImpl(input, init);
+  };
+};
+
+const callApi = createFetchClient({
+  fetchMiddleware: myMiddleware,
+});
+```
+
+<Tip>
+Use the provided types for better IDE support and type safety.
+</Tip>

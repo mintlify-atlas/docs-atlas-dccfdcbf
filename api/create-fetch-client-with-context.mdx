@@ -1,0 +1,432 @@
+---
+title: createFetchClientWithContext
+description: Create a client factory with custom TypeScript context types for advanced type safety
+---
+
+The `createFetchClientWithContext` function creates a factory for `createFetchClient` with custom TypeScript context types. This enables advanced type safety features like custom data types, error types, and configuration defaults at the type level.
+
+## Function Signature
+
+```typescript
+function createFetchClientWithContext<
+  TOuterCallApiContext extends CallApiContext = DefaultCallApiContext
+>(): typeof createFetchClient
+```
+
+## Type Parameters
+
+<ParamField path="TOuterCallApiContext" type="CallApiContext" default="DefaultCallApiContext">
+  Custom context type that defines type-level defaults for all clients created by this factory.
+  
+  ```typescript
+  interface CallApiContext {
+    Data?: unknown          // Default success data type
+    ErrorData?: unknown     // Default error data type  
+    ResultMode?: 'simple' | 'result'  // Default result mode
+  }
+  ```
+  
+  ### Context Properties
+  
+  <ParamField path="TOuterCallApiContext.Data" type="any">
+    Default type for successful response data. Used when no explicit type is provided to `callApi`.
+  </ParamField>
+  
+  <ParamField path="TOuterCallApiContext.ErrorData" type="any">
+    Default type for error response data. Used for HTTP error responses.
+  </ParamField>
+  
+  <ParamField path="TOuterCallApiContext.ResultMode" type="'simple' | 'result'">
+    Default result mode for all requests. Affects return type structure.
+  </ParamField>
+</ParamField>
+
+## Return Type
+
+<ResponseField name="createFetchClient" type="CreateFetchClientFunction">
+  Returns a `createFetchClient` function that inherits the custom context types. The returned factory has the same signature as the standard `createFetchClient`, but with your custom types as defaults.
+  
+  ```typescript
+  type CreateFetchClientFunction = <
+    TBaseCallApiContext extends CallApiContext = TOuterCallApiContext,
+    ...
+  >(
+    initBaseConfig?: BaseCallApiConfig
+  ) => CallApiFunction
+  ```
+</ResponseField>
+
+## Usage Examples
+
+### Basic Context with Custom Error Type
+
+```typescript
+import { createFetchClientWithContext } from 'callapi'
+
+// Define your API's standard error format
+interface ApiError {
+  message: string
+  code: string
+  timestamp: string
+  details?: Record<string, string[]>
+}
+
+// Create context with default error type
+interface MyApiContext {
+  ErrorData: ApiError
+}
+
+const createMyFetchClient = createFetchClientWithContext<MyApiContext>()
+
+// Create client - all errors are typed as ApiError by default
+const api = createMyFetchClient({
+  baseURL: 'https://api.example.com',
+  resultMode: 'result'
+})
+
+interface User {
+  id: number
+  name: string
+}
+
+// error.data is automatically typed as ApiError
+const { data, error } = await api<User>('/users/1')
+if (error) {
+  console.error(`Error ${error.data?.code}: ${error.data?.message}`)
+  if (error.data?.details) {
+    // TypeScript knows details exists and is correctly typed
+    Object.entries(error.data.details).forEach(([field, errors]) => {
+      console.error(`  ${field}: ${errors.join(', ')}`)
+    })
+  }
+}
+```
+
+### Context with Standard Response Wrapper
+
+```typescript
+// Your API wraps all responses in a standard envelope
+interface ApiResponse<T> {
+  success: boolean
+  data: T
+  meta: {
+    timestamp: string
+    requestId: string
+  }
+}
+
+interface ApiErrorResponse {
+  success: false
+  error: {
+    message: string
+    code: string
+  }
+  meta: {
+    timestamp: string
+    requestId: string
+  }
+}
+
+interface WrappedApiContext {
+  Data: ApiResponse<unknown>
+  ErrorData: ApiErrorResponse
+  ResultMode: 'result'
+}
+
+const createApiClient = createFetchClientWithContext<WrappedApiContext>()
+
+const api = createApiClient({
+  baseURL: 'https://api.example.com'
+})
+
+interface User {
+  id: number
+  name: string
+}
+
+// Response is automatically typed as ApiResponse<User>
+const { data, error } = await api<ApiResponse<User>>('/users/1')
+
+if (data) {
+  console.log('Request ID:', data.meta.requestId)
+  console.log('User:', data.data.name)  // data.data.name - outer is response, inner is user
+}
+
+if (error) {
+  console.error('Error:', error.data?.error.message)
+}
+```
+
+### Context for Different API Versions
+
+```typescript
+// V1 API types
+interface V1Error {
+  error: string
+  error_code: number
+}
+
+interface V1Context {
+  ErrorData: V1Error
+}
+
+// V2 API types (improved format)
+interface V2Error {
+  message: string
+  code: string
+  statusCode: number
+  details?: unknown
+}
+
+interface V2Context {
+  ErrorData: V2Error
+  ResultMode: 'result'  // V2 always uses result mode
+}
+
+// Create separate factories for each version
+const createV1Client = createFetchClientWithContext<V1Context>()
+const createV2Client = createFetchClientWithContext<V2Context>()
+
+// V1 client
+const apiV1 = createV1Client({
+  baseURL: 'https://api.example.com/v1'
+})
+
+// V2 client with different defaults
+const apiV2 = createV2Client({
+  baseURL: 'https://api.example.com/v2'
+})
+
+interface User {
+  id: number
+  name: string
+}
+
+// V1 errors are typed as V1Error
+const userV1 = await apiV1<User>('/users/1')
+
+// V2 errors are typed as V2Error, and result mode is default
+const { data: userV2, error } = await apiV2<User>('/users/1')
+if (error) {
+  // error.data is V2Error
+  console.error(`${error.data?.code}: ${error.data?.message}`)
+}
+```
+
+### Context with Organization-Wide Standards
+
+```typescript
+// Your organization's standard API response formats
+namespace OrgAPI {
+  export interface SuccessResponse<T> {
+    status: 'success'
+    data: T
+    pagination?: {
+      page: number
+      pageSize: number
+      total: number
+    }
+  }
+  
+  export interface ErrorResponse {
+    status: 'error'
+    error: {
+      message: string
+      code: string
+      statusCode: number
+      validationErrors?: Record<string, string[]>
+    }
+  }
+  
+  export interface Context {
+    Data: SuccessResponse<unknown>
+    ErrorData: ErrorResponse
+    ResultMode: 'result'
+  }
+}
+
+// Create organization-standard client factory
+const createOrgApiClient = createFetchClientWithContext<OrgAPI.Context>()
+
+// All teams use this factory for consistency
+export const createUserServiceClient = () => createOrgApiClient({
+  baseURL: 'https://api.example.com/users',
+  headers: { 'X-Service': 'users' }
+})
+
+export const createOrderServiceClient = () => createOrgApiClient({
+  baseURL: 'https://api.example.com/orders',
+  headers: { 'X-Service': 'orders' }
+})
+
+interface User {
+  id: number
+  name: string
+}
+
+const userApi = createUserServiceClient()
+
+// All responses follow organization standards
+const { data, error } = await userApi<OrgAPI.SuccessResponse<User[]>>('/list', {
+  query: { page: 1, pageSize: 20 }
+})
+
+if (data) {
+  console.log(`Page ${data.pagination?.page} of ${data.pagination?.total}`)
+  data.data.forEach(user => console.log(user.name))
+}
+
+if (error) {
+  console.error(error.data?.error.message)
+  if (error.data?.error.validationErrors) {
+    // Handle validation errors
+  }
+}
+```
+
+### Context with Custom Result Mode Default
+
+```typescript
+// Force all requests to use result mode by default
+interface ResultModeContext {
+  ResultMode: 'result'
+}
+
+const createResultModeClient = createFetchClientWithContext<ResultModeContext>()
+
+const api = createResultModeClient({
+  baseURL: 'https://api.example.com'
+})
+
+interface User {
+  id: number
+  name: string
+}
+
+// Always returns { data, error, response } by default
+const result = await api<User>('/users/1')
+// Type: { data: User | null, error: ..., response: ... }
+
+if (result.error) {
+  console.error('Error:', result.error.message)
+  return
+}
+
+console.log('User:', result.data.name)
+console.log('Status:', result.response.status)
+
+// Can still override for specific requests
+const user = await api<User>('/users/1', { resultMode: 'simple' })
+// Type: User | null
+```
+
+### Multiple Contexts for Different Services
+
+```typescript
+// REST API context
+interface RestApiContext {
+  ErrorData: {
+    message: string
+    statusCode: number
+  }
+}
+
+// GraphQL API context
+interface GraphQLContext {
+  Data: {
+    data: unknown
+    errors?: Array<{ message: string; path?: string[] }>
+  }
+  ErrorData: {
+    errors: Array<{ message: string }>
+  }
+}
+
+const createRestClient = createFetchClientWithContext<RestApiContext>()
+const createGraphQLClient = createFetchClientWithContext<GraphQLContext>()
+
+// REST client
+const restApi = createRestClient({
+  baseURL: 'https://api.example.com/rest'
+})
+
+// GraphQL client
+const graphqlApi = createGraphQLClient({
+  baseURL: 'https://api.example.com/graphql',
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' }
+})
+
+interface User {
+  id: number
+  name: string
+}
+
+// REST request
+const user = await restApi<User>('/users/1')
+
+// GraphQL request
+const gqlResponse = await graphqlApi<{ data: { user: User } }>('', {
+  body: {
+    query: `query { user(id: 1) { id name } }`
+  }
+})
+```
+
+## Type Inference
+
+Context types flow through the entire call chain:
+
+```typescript
+interface MyContext {
+  ErrorData: { code: string; message: string }
+  ResultMode: 'result'
+}
+
+const createMyClient = createFetchClientWithContext<MyContext>()
+const api = createMyClient({ baseURL: 'https://api.example.com' })
+
+interface User {
+  id: number
+  name: string
+}
+
+// Return type includes MyContext.ErrorData automatically
+const result = await api<User>('/users/1')
+// Type: {
+//   data: User | null
+//   error: PossibleHTTPError<{ code: string; message: string }> | ... | null
+//   response: Response | null
+// }
+
+if (result.error && result.error.data) {
+  // TypeScript knows error.data.code and error.data.message exist
+  console.error(`${result.error.data.code}: ${result.error.data.message}`)
+}
+```
+
+## When to Use
+
+Use `createFetchClientWithContext` when you need:
+
+1. **Consistent error types**: Your API has a standard error format
+2. **Response wrappers**: All responses follow a common structure
+3. **Multiple API versions**: Different type defaults per version
+4. **Organization standards**: Enforce consistent types across teams
+5. **Default result mode**: Always use `result` mode for explicit error handling
+6. **Library/SDK development**: Create typed clients for external users
+
+For simpler use cases, `createFetchClient` is usually sufficient.
+
+## Best Practices
+
+1. **Define context once**: Create a single factory per API or service
+2. **Export the factory**: Share it across your codebase
+3. **Document error types**: Make it clear what errors can occur
+4. **Use discriminated unions**: For APIs with multiple response formats
+5. **Version your contexts**: Create new contexts for API version changes
+
+## Related
+
+- [callApi](/api/call-api) - Default client instance
+- [createFetchClient](/api/create-fetch-client) - Create client without custom context

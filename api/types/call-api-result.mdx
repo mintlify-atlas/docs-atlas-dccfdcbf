@@ -1,0 +1,414 @@
+---
+title: CallApiResult
+description: Return type for CallApi requests
+---
+
+## Overview
+
+The `CallApiResult` type defines the structure of the return value from CallApi requests. The exact shape depends on the `resultMode` and `throwOnError` configuration options.
+
+## Type Definition
+
+```typescript
+type CallApiResult<
+  TData,
+  TErrorData,
+  TResultMode extends ResultModeType,
+  TThrowOnError extends ThrowOnErrorBoolean,
+> = InferCallApiResult<TData, TErrorData, TResultMode, TThrowOnError>
+```
+
+## Result Modes
+
+The result structure changes based on the `resultMode` option:
+
+### "all" Mode (Default)
+
+Returns complete result with data, error, and response.
+
+```typescript
+const { data, error, response } = await callApi('/users');
+
+if (error) {
+  console.error('Request failed:', error);
+  console.log('Status:', response?.status);
+} else {
+  console.log('Success:', data);
+  console.log('Headers:', response.headers);
+}
+```
+
+**Type Structure:**
+```typescript
+type AllModeResult<TData, TErrorData> = 
+  | { data: TData; error: null; response: Response }
+  | { data: null; error: ErrorVariant<TErrorData>; response: Response | null }
+```
+
+### "onlyData" Mode
+
+Returns only the parsed response data.
+
+```typescript
+const users = await callApi('/users', { resultMode: 'onlyData' });
+console.log('Users:', users);
+```
+
+**Type Structure:**
+```typescript
+type OnlyDataResult<TData> = TData | null
+```
+
+### "onlyResponse" Mode
+
+Returns only the Response object.
+
+```typescript
+const response = await callApi('/users', { resultMode: 'onlyResponse' });
+console.log('Status:', response.status);
+console.log('Headers:', response.headers);
+const data = await response.json();
+```
+
+**Type Structure:**
+```typescript
+type OnlyResponseResult = Response
+```
+
+### "fetchApi" Mode
+
+Returns only the Response object and skips internal parsing and validation.
+
+```typescript
+const response = await callApi('/users', { resultMode: 'fetchApi' });
+// Response is returned directly without any processing
+if (response.ok) {
+  const data = await response.json();
+}
+```
+
+**Type Structure:**
+```typescript
+type FetchApiResult = Response
+```
+
+### "withoutResponse" Mode
+
+Returns data and error, but omits the response object.
+
+```typescript
+const { data, error } = await callApi('/users', { 
+  resultMode: 'withoutResponse' 
+});
+
+if (error) {
+  console.error('Request failed:', error.message);
+} else {
+  console.log('Data:', data);
+}
+```
+
+**Type Structure:**
+```typescript
+type WithoutResponseResult<TData, TErrorData> = 
+  | { data: TData; error: null }
+  | { data: null; error: ErrorVariant<TErrorData> }
+```
+
+## Success Result
+
+When a request succeeds (2xx status code):
+
+<ParamField path="data" type="TData" required>
+  The parsed response data. Type depends on `responseType` option:
+  - `"json"`: Parsed JSON object
+  - `"text"`: String
+  - `"blob"`: Blob
+  - `"arrayBuffer"`: ArrayBuffer
+  - `"stream"`: ReadableStream
+</ParamField>
+
+<ParamField path="error" type="null" required>
+  Always `null` for successful requests.
+</ParamField>
+
+<ParamField path="response" type="Response" required>
+  The raw Response object from fetch.
+</ParamField>
+
+**Example:**
+```typescript
+const { data, error, response } = await callApi('/users');
+
+if (error === null) {
+  // TypeScript knows data is not null here
+  console.log('Users:', data);
+  console.log('Status:', response.status); // 200
+  console.log('Content-Type:', response.headers.get('content-type'));
+}
+```
+
+## Error Result
+
+When a request fails, the error object contains:
+
+<ParamField path="data" type="null" required>
+  Always `null` for failed requests.
+</ParamField>
+
+<ParamField path="error" type="ErrorVariant" required>
+  Error information object with the following properties:
+
+  - `name`: Error type name
+  - `message`: Human-readable error message
+  - `errorData`: Parsed error data from response (for HTTP errors)
+  - `originalError`: The original error instance
+</ParamField>
+
+<ParamField path="response" type="Response | null" required>
+  The Response object if available (HTTP errors), or `null` for network errors.
+</ParamField>
+
+## Error Variants
+
+### HTTP Error
+
+Occurs when the server returns an error status code (4xx, 5xx).
+
+```typescript
+const { data, error, response } = await callApi('/users/999');
+
+if (error?.name === 'HTTPError') {
+  console.log('HTTP Error:', error.message);
+  console.log('Status:', response?.status); // 404
+  console.log('Error data:', error.errorData);
+  console.log('Original error:', error.originalError);
+}
+```
+
+**Type Structure:**
+```typescript
+type PossibleHTTPError<TErrorData> = {
+  name: 'HTTPError';
+  message: string;
+  errorData: TErrorData;
+  originalError: HTTPError;
+}
+```
+
+### JavaScript Error
+
+Occurs when a network or JavaScript error happens (connection failure, timeout, etc.).
+
+```typescript
+const { data, error, response } = await callApi('/users', { timeout: 1000 });
+
+if (error?.name === 'TimeoutError') {
+  console.log('Request timed out:', error.message);
+  console.log('Original error:', error.originalError);
+}
+```
+
+**Type Structure:**
+```typescript
+type PossibleJavaScriptError = {
+  name: 'Error' | 'TypeError' | 'AbortError' | 'TimeoutError' | 'SyntaxError' | string;
+  message: string;
+  errorData: false;
+  originalError: Error | TypeError | DOMException | SyntaxError;
+}
+```
+
+### Validation Error
+
+Occurs when request or response data fails schema validation.
+
+```typescript
+import { z } from 'zod';
+
+const { data, error } = await callApi('/users', {
+  schema: {
+    response: z.object({
+      id: z.string(),
+      name: z.string()
+    })
+  }
+});
+
+if (error?.name === 'ValidationError') {
+  console.log('Validation failed:', error.message);
+  console.log('Issue cause:', error.issueCause); // 'request' | 'response'
+  console.log('Error data:', error.errorData);
+}
+```
+
+**Type Structure:**
+```typescript
+type PossibleValidationError = {
+  name: 'ValidationError';
+  message: string;
+  errorData: ValidationError['errorData'];
+  issueCause: 'request' | 'response';
+  originalError: ValidationError;
+}
+```
+
+## throwOnError Behavior
+
+When `throwOnError` is set to `true`, errors are thrown instead of returned:
+
+```typescript
+try {
+  // With throwOnError: true, only data is returned
+  const data = await callApi('/users', { throwOnError: true });
+  console.log('Users:', data);
+} catch (error) {
+  // Error is thrown as exception
+  if (error.name === 'HTTPError') {
+    console.error('HTTP error:', error.response.status);
+  } else {
+    console.error('Request error:', error.message);
+  }
+}
+```
+
+**With throwOnError:**
+- Success: Returns data directly (no error field)
+- Failure: Throws exception
+
+**Without throwOnError (default):**
+- Success: Returns `{ data, error: null, response }`
+- Failure: Returns `{ data: null, error, response }`
+
+## Examples
+
+### Basic Error Handling
+
+```typescript
+const { data, error, response } = await callApi('/users');
+
+if (error) {
+  console.error('Request failed:', error.message);
+  return;
+}
+
+console.log('Users:', data);
+```
+
+### Type-Safe Error Handling
+
+```typescript
+const { data, error } = await callApi<User[], ErrorResponse>('/users');
+
+if (error) {
+  // error.errorData is typed as ErrorResponse
+  if (error.name === 'HTTPError') {
+    console.error('API error:', error.errorData.message);
+  } else {
+    console.error('Network error:', error.message);
+  }
+  return;
+}
+
+// data is typed as User[]
+data.forEach(user => console.log(user.name));
+```
+
+### Different Result Modes
+
+```typescript
+// Full result
+const { data, error, response } = await callApi('/users', {
+  resultMode: 'all'
+});
+
+// Only data
+const users = await callApi('/users', {
+  resultMode: 'onlyData'
+});
+
+// Only response
+const response = await callApi('/users', {
+  resultMode: 'onlyResponse'
+});
+const data = await response.json();
+
+// Without response
+const { data, error } = await callApi('/users', {
+  resultMode: 'withoutResponse'
+});
+```
+
+### With Validation
+
+```typescript
+import { z } from 'zod';
+
+const UserSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  email: z.string().email()
+});
+
+const { data, error } = await callApi('/users/123', {
+  schema: {
+    response: UserSchema
+  }
+});
+
+if (error) {
+  if (error.name === 'ValidationError') {
+    console.error('Invalid response format:', error.errorData);
+  } else {
+    console.error('Request failed:', error.message);
+  }
+  return;
+}
+
+// data is typed and validated
+console.log('User email:', data.email);
+```
+
+### Handling Specific Error Types
+
+```typescript
+const { data, error, response } = await callApi('/users');
+
+if (error) {
+  switch (error.name) {
+    case 'HTTPError':
+      if (response?.status === 401) {
+        console.error('Unauthorized - please login');
+      } else if (response?.status === 404) {
+        console.error('Resource not found');
+      } else {
+        console.error('Server error:', error.errorData);
+      }
+      break;
+    
+    case 'TimeoutError':
+      console.error('Request timed out');
+      break;
+    
+    case 'AbortError':
+      console.error('Request was cancelled');
+      break;
+    
+    case 'ValidationError':
+      console.error('Validation error:', error.errorData);
+      break;
+    
+    default:
+      console.error('Unknown error:', error.message);
+  }
+  return;
+}
+
+console.log('Success:', data);
+```
+
+## See Also
+
+- [CallApiExtraOptions](/api/config/extra-options) - Configuration options including resultMode and throwOnError
+- [Hooks](/api/types/hooks) - Lifecycle hooks for handling success and errors
+- [HTTPError](https://github.com/sindresorhus/ky/blob/main/source/errors/HTTPError.ts) - HTTP error class

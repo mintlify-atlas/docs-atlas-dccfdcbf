@@ -1,0 +1,448 @@
+---
+title: CallApiRequestOptions
+description: HTTP request configuration options for CallApi
+---
+
+## Overview
+
+The `CallApiRequestOptions` interface defines the core HTTP request parameters like method, headers, body, and other standard fetch options.
+
+## Type Definition
+
+```typescript
+type CallApiRequestOptions = {
+  body?: Body;
+  headers?: HeadersOption;
+  method?: MethodUnion;
+} & Pick<RequestInit, FetchSpecificKeys>
+```
+
+## Properties
+
+### body
+
+<ParamField path="body" type="Body">
+  Body of the request, can be an object or any other supported body type.
+
+  Supported body types:
+  - Plain objects (automatically serialized to JSON)
+  - FormData
+  - URLSearchParams
+  - Blob
+  - ArrayBuffer
+  - ReadableStream
+  - String
+
+  ```typescript
+  // JSON body (object)
+  await callApi('/users', {
+    method: 'POST',
+    body: {
+      name: 'John Doe',
+      email: 'john@example.com'
+    }
+  });
+
+  // FormData body
+  const formData = new FormData();
+  formData.append('file', fileInput.files[0]);
+  await callApi('/upload', {
+    method: 'POST',
+    body: formData
+  });
+
+  // URLSearchParams body
+  const params = new URLSearchParams();
+  params.append('key', 'value');
+  await callApi('/form', {
+    method: 'POST',
+    body: params
+  });
+  ```
+</ParamField>
+
+### headers
+
+<ParamField path="headers" type="HeadersOption">
+  Headers to be used in the request.
+
+  Can be provided as:
+  - Plain object
+  - Headers instance
+  - Array of tuples
+
+  ```typescript
+  // Plain object
+  headers: {
+    'Content-Type': 'application/json',
+    'Authorization': 'Bearer token',
+    'X-Custom-Header': 'value'
+  }
+
+  // Headers instance
+  const headers = new Headers();
+  headers.set('Content-Type', 'application/json');
+  await callApi('/users', { headers });
+
+  // Array of tuples
+  headers: [
+    ['Content-Type', 'application/json'],
+    ['Authorization', 'Bearer token']
+  ]
+  ```
+</ParamField>
+
+### method
+
+<ParamField path="method" type="MethodUnion" default="GET">
+  HTTP method for the request.
+
+  Supported methods:
+  - GET
+  - POST
+  - PUT
+  - PATCH
+  - DELETE
+  - HEAD
+  - OPTIONS
+
+  ```typescript
+  // GET request (default)
+  await callApi('/users');
+
+  // POST request
+  await callApi('/users', {
+    method: 'POST',
+    body: { name: 'John' }
+  });
+
+  // PUT request
+  await callApi('/users/123', {
+    method: 'PUT',
+    body: { name: 'Jane' }
+  });
+
+  // DELETE request
+  await callApi('/users/123', {
+    method: 'DELETE'
+  });
+  ```
+</ParamField>
+
+## Standard Fetch Options
+
+In addition to the core properties, `CallApiRequestOptions` includes standard fetch options:
+
+### cache
+
+<ParamField path="cache" type="RequestCache">
+  Cache mode for the request.
+
+  Options: `default`, `no-store`, `reload`, `no-cache`, `force-cache`, `only-if-cached`
+
+  ```typescript
+  await callApi('/users', {
+    cache: 'no-cache'
+  });
+  ```
+</ParamField>
+
+### credentials
+
+<ParamField path="credentials" type="RequestCredentials">
+  Controls whether to send credentials (cookies) with the request.
+
+  Options: `omit`, `same-origin`, `include`
+
+  ```typescript
+  await callApi('/users', {
+    credentials: 'include'
+  });
+  ```
+</ParamField>
+
+### integrity
+
+<ParamField path="integrity" type="string">
+  Subresource integrity value for the request.
+
+  ```typescript
+  await callApi('/script.js', {
+    integrity: 'sha384-...'
+  });
+  ```
+</ParamField>
+
+### keepalive
+
+<ParamField path="keepalive" type="boolean">
+  Indicates whether the request should outlive the page.
+
+  ```typescript
+  await callApi('/analytics', {
+    method: 'POST',
+    keepalive: true,
+    body: { event: 'page_view' }
+  });
+  ```
+</ParamField>
+
+### mode
+
+<ParamField path="mode" type="RequestMode">
+  Request mode.
+
+  Options: `cors`, `no-cors`, `same-origin`, `navigate`
+
+  ```typescript
+  await callApi('/api/data', {
+    mode: 'cors'
+  });
+  ```
+</ParamField>
+
+### redirect
+
+<ParamField path="redirect" type="RequestRedirect">
+  How to handle redirects.
+
+  Options: `follow`, `error`, `manual`
+
+  ```typescript
+  await callApi('/redirect', {
+    redirect: 'follow'
+  });
+  ```
+</ParamField>
+
+### referrer
+
+<ParamField path="referrer" type="string">
+  Referrer of the request.
+
+  ```typescript
+  await callApi('/users', {
+    referrer: 'https://example.com'
+  });
+  ```
+</ParamField>
+
+### referrerPolicy
+
+<ParamField path="referrerPolicy" type="ReferrerPolicy">
+  Referrer policy for the request.
+
+  Options: `no-referrer`, `no-referrer-when-downgrade`, `origin`, `origin-when-cross-origin`, `same-origin`, `strict-origin`, `strict-origin-when-cross-origin`, `unsafe-url`
+
+  ```typescript
+  await callApi('/users', {
+    referrerPolicy: 'no-referrer'
+  });
+  ```
+</ParamField>
+
+### signal
+
+<ParamField path="signal" type="AbortSignal">
+  AbortSignal to abort the request.
+
+  ```typescript
+  const controller = new AbortController();
+
+  // Abort after 5 seconds
+  setTimeout(() => controller.abort(), 5000);
+
+  try {
+    await callApi('/users', {
+      signal: controller.signal
+    });
+  } catch (error) {
+    if (error.name === 'AbortError') {
+      console.log('Request was aborted');
+    }
+  }
+  ```
+</ParamField>
+
+### window
+
+<ParamField path="window" type="null">
+  Can only be null. Used for worker contexts.
+
+  ```typescript
+  await callApi('/users', {
+    window: null
+  });
+  ```
+</ParamField>
+
+### duplex
+
+<ParamField path="duplex" type="'half'">
+  Duplex mode for streaming request bodies.
+
+  ```typescript
+  const stream = new ReadableStream(/* ... */);
+  
+  await callApi('/upload', {
+    method: 'POST',
+    body: stream,
+    duplex: 'half'
+  });
+  ```
+</ParamField>
+
+## Examples
+
+### Simple GET Request
+
+```typescript
+const { data } = await callApi('/users');
+```
+
+### POST with JSON Body
+
+```typescript
+const { data, error } = await callApi('/users', {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json'
+  },
+  body: {
+    name: 'John Doe',
+    email: 'john@example.com',
+    role: 'admin'
+  }
+});
+
+if (error) {
+  console.error('Failed to create user:', error);
+} else {
+  console.log('User created:', data);
+}
+```
+
+### File Upload with FormData
+
+```typescript
+const formData = new FormData();
+formData.append('file', fileInput.files[0]);
+formData.append('description', 'Profile picture');
+
+const { data } = await callApi('/upload', {
+  method: 'POST',
+  body: formData
+});
+```
+
+### PUT Request with Custom Headers
+
+```typescript
+await callApi('/users/123', {
+  method: 'PUT',
+  headers: {
+    'Authorization': 'Bearer token',
+    'Content-Type': 'application/json',
+    'X-API-Version': '2.0'
+  },
+  body: {
+    name: 'Jane Smith'
+  }
+});
+```
+
+### DELETE Request
+
+```typescript
+const { error } = await callApi('/users/123', {
+  method: 'DELETE',
+  headers: {
+    'Authorization': 'Bearer token'
+  }
+});
+
+if (error) {
+  console.error('Failed to delete user:', error);
+}
+```
+
+### Request with AbortSignal
+
+```typescript
+const controller = new AbortController();
+
+// Cancel request after 10 seconds
+const timeoutId = setTimeout(() => controller.abort(), 10000);
+
+try {
+  const { data } = await callApi('/slow-endpoint', {
+    signal: controller.signal
+  });
+  clearTimeout(timeoutId);
+  console.log('Data received:', data);
+} catch (error) {
+  if (error.name === 'AbortError') {
+    console.log('Request timed out');
+  }
+}
+```
+
+### CORS Request
+
+```typescript
+const { data } = await callApi('https://external-api.com/data', {
+  mode: 'cors',
+  credentials: 'include',
+  headers: {
+    'Content-Type': 'application/json'
+  }
+});
+```
+
+### Streaming Request Body
+
+```typescript
+const stream = new ReadableStream({
+  start(controller) {
+    // Push data chunks
+    controller.enqueue(new TextEncoder().encode('chunk 1'));
+    controller.enqueue(new TextEncoder().encode('chunk 2'));
+    controller.close();
+  }
+});
+
+await callApi('/stream-upload', {
+  method: 'POST',
+  body: stream,
+  duplex: 'half'
+});
+```
+
+## Best Practices
+
+1. **Content-Type Headers**: Set appropriate `Content-Type` header for your request body:
+   - `application/json` for JSON objects
+   - `multipart/form-data` for FormData (automatically set)
+   - `application/x-www-form-urlencoded` for URLSearchParams
+
+2. **Method Selection**: Use appropriate HTTP methods:
+   - GET for retrieving data
+   - POST for creating resources
+   - PUT for full updates
+   - PATCH for partial updates
+   - DELETE for removing resources
+
+3. **Request Cancellation**: Use `AbortSignal` for requests that may need to be cancelled:
+   ```typescript
+   const controller = new AbortController();
+   await callApi('/data', { signal: controller.signal });
+   // Later: controller.abort()
+   ```
+
+4. **Credentials**: Set `credentials: 'include'` when making authenticated cross-origin requests that require cookies.
+
+## See Also
+
+- [BaseCallApiConfig](/api/config/base-config) - Base configuration interface
+- [CallApiExtraOptions](/api/config/extra-options) - Additional configuration options
+- [Hooks](/api/types/hooks) - Request/response lifecycle hooks

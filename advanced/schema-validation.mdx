@@ -1,0 +1,534 @@
+---
+title: 'Schema Validation'
+description: 'Runtime validation with Standard Schema support'
+icon: 'shield-check'
+---
+
+## Overview
+
+CallApi provides powerful schema validation capabilities using the [Standard Schema](https://github.com/standard-schema/standard-schema) specification. This allows you to validate request and response data at runtime with any compatible validation library.
+
+## Standard Schema Support
+
+CallApi implements Standard Schema v1, which means it works seamlessly with popular validation libraries:
+
+- **Zod** - TypeScript-first schema validation
+- **Valibot** - Lightweight schema validation
+- **Yup** - JavaScript schema builder
+- **ArkType** - TypeScript validation with runtime type inference
+- **Any library** implementing the Standard Schema interface
+
+### Standard Schema Interface
+
+The Standard Schema interface requires a validation function that returns a result:
+
+```typescript
+interface StandardSchemaV1<Input = unknown, Output = Input> {
+  readonly '~standard': {
+    readonly vendor: string;
+    readonly version: 1;
+    readonly validate: (
+      value: unknown
+    ) => Promise<Result<Output>> | Result<Output>;
+  };
+}
+
+type Result<Output> = 
+  | { issues?: undefined; value: Output }
+  | { issues: readonly Issue[]; value?: undefined };
+```
+
+Source: [types/standard-schema.ts:52-69](~/workspace/source/packages/callapi/src/types/standard-schema.ts)
+
+## Schema Types
+
+CallApi supports validation for different parts of the request/response cycle:
+
+<Accordion title="Request Validation">
+
+- **body** - Validate request body data
+- **headers** - Validate request headers
+- **params** - Validate URL path parameters
+- **query** - Validate query string parameters
+- **method** - Validate HTTP method
+- **auth** - Validate authentication options
+
+</Accordion>
+
+<Accordion title="Response Validation">
+
+- **data** - Validate successful response data
+- **errorData** - Validate error response data
+
+</Accordion>
+
+<Accordion title="Configuration Validation">
+
+- **meta** - Validate metadata options
+
+</Accordion>
+
+Source: [validation.ts:163-205](~/workspace/source/packages/callapi/src/validation.ts)
+
+## Basic Usage
+
+### Using Zod
+
+```typescript
+import { z } from 'zod';
+import { createFetchClient } from 'callapi';
+
+const UserSchema = z.object({
+  id: z.number(),
+  name: z.string(),
+  email: z.string().email(),
+});
+
+const callApi = createFetchClient({
+  baseURL: 'https://api.example.com',
+  schema: {
+    routes: {
+      '/users/:id': {
+        data: UserSchema,
+        params: z.object({
+          id: z.string().regex(/^\d+$/),
+        }),
+      },
+    },
+  },
+});
+
+// TypeScript knows the return type matches UserSchema
+const { data } = await callApi('/users/123');
+```
+
+### Using Valibot
+
+```typescript
+import * as v from 'valibot';
+import { createFetchClient } from 'callapi';
+
+const PostSchema = v.object({
+  id: v.number(),
+  title: v.string(),
+  body: v.string(),
+  userId: v.number(),
+});
+
+const callApi = createFetchClient({
+  baseURL: 'https://api.example.com',
+  schema: {
+    routes: {
+      'POST /posts': {
+        body: PostSchema,
+        data: PostSchema,
+      },
+    },
+  },
+});
+
+const { data } = await callApi('POST /posts', {
+  body: {
+    title: 'My Post',
+    body: 'Post content',
+    userId: 1,
+  },
+});
+```
+
+### Custom Validator Functions
+
+You can also use custom validation functions:
+
+```typescript
+const callApi = createFetchClient({
+  baseURL: 'https://api.example.com',
+  schema: {
+    routes: {
+      '/status': {
+        data: (value) => {
+          if (typeof value !== 'object' || !value) {
+            throw new Error('Expected object');
+          }
+          if (!('status' in value)) {
+            throw new Error('Missing status field');
+          }
+          return value;
+        },
+      },
+    },
+  },
+});
+```
+
+Source: [validation.ts:55-64](~/workspace/source/packages/callapi/src/validation.ts)
+
+## Schema Configuration
+
+### Base URL and Prefixes
+
+Control how schemas map to routes:
+
+```typescript
+const callApi = createFetchClient({
+  baseURL: 'https://api.example.com',
+  schema: {
+    config: {
+      baseURL: '/api/v1',
+      prefix: '/api',
+    },
+    routes: {
+      '/users': UserSchema,
+    },
+  },
+});
+
+// Calls https://api.example.com/api/v1/users
+// But matches schema for '/users'
+await callApi('/api/users');
+```
+
+Source: [validation.ts:117-143](~/workspace/source/packages/callapi/src/validation.ts)
+
+<Accordion title="Configuration Options">
+
+**baseURL** `string`
+
+The base URL for schema routes. By default, uses the client's baseURL.
+
+**prefix** `string`
+
+A URL prefix that will be substituted for the baseURL at runtime. Keeps route definitions concise.
+
+**strict** `boolean`
+
+When true, only routes explicitly defined in the schema are allowed. Undefined routes cause validation errors.
+
+```typescript
+schema: {
+  config: {
+    strict: true,
+  },
+  routes: {
+    '/users': UserSchema,
+  },
+}
+
+// ✅ Allowed
+await callApi('/users');
+
+// ❌ Runtime error: Route not in schema
+await callApi('/posts');
+```
+
+**disableRuntimeValidation** `boolean | BooleanObject`
+
+Disables runtime validation for specific schema fields:
+
+```typescript
+schema: {
+  config: {
+    // Disable all validation
+    disableRuntimeValidation: true,
+    
+    // Or disable specific fields
+    disableRuntimeValidation: {
+      data: true,
+      params: false,
+    },
+  },
+}
+```
+
+**disableRuntimeValidationTransform** `boolean | BooleanObject`
+
+Uses original input instead of validated/transformed output:
+
+```typescript
+schema: {
+  config: {
+    // Use raw input, ignore transformations
+    disableRuntimeValidationTransform: true,
+  },
+}
+```
+
+Source: [validation.ts:117-157](~/workspace/source/packages/callapi/src/validation.ts)
+
+</Accordion>
+
+## Route Patterns
+
+### HTTP Method Prefixes
+
+Define schemas specific to HTTP methods:
+
+```typescript
+const callApi = createFetchClient({
+  baseURL: 'https://api.example.com',
+  schema: {
+    routes: {
+      '@get/users': {
+        data: UserListSchema,
+      },
+      '@post/users': {
+        body: CreateUserSchema,
+        data: UserSchema,
+      },
+      '@delete/users/:id': {
+        params: z.object({ id: z.string() }),
+      },
+    },
+  },
+});
+```
+
+Source: [validation.ts:207-211](~/workspace/source/packages/callapi/src/validation.ts)
+
+### Fallback Schema
+
+Define a default schema for all routes:
+
+```typescript
+import { fallBackRouteSchemaKey } from 'callapi';
+
+const callApi = createFetchClient({
+  baseURL: 'https://api.example.com',
+  schema: {
+    routes: {
+      [fallBackRouteSchemaKey]: {
+        headers: CommonHeadersSchema,
+        errorData: ErrorSchema,
+      },
+      '/users': {
+        data: UserSchema,
+        // Inherits headers and errorData from fallback
+      },
+    },
+  },
+});
+```
+
+Source: [validation.ts:407-414](~/workspace/source/packages/callapi/src/validation.ts)
+
+## Dynamic Schemas
+
+Use functions to compute schemas based on context:
+
+```typescript
+const callApi = createFetchClient({
+  baseURL: 'https://api.example.com',
+  schema: {
+    routes: {
+      '/users': UserSchema,
+    },
+  },
+});
+
+await callApi('/posts', {
+  schema: ({ currentRouteSchema, baseSchemaRoutes }) => {
+    // Extend base schema for this request
+    return {
+      ...currentRouteSchema,
+      data: PostSchema,
+    };
+  },
+});
+```
+
+Source: [validation.ts:416-426](~/workspace/source/packages/callapi/src/validation.ts)
+
+## Validation Error Handling
+
+When validation fails, CallApi throws a `ValidationError`:
+
+```typescript
+import { ValidationError } from 'callapi';
+
+try {
+  await callApi('/users/invalid');
+} catch (error) {
+  if (error instanceof ValidationError) {
+    console.log('Validation failed:', error.issueCause);
+    console.log('Issues:', error.issues);
+    console.log('Response:', error.response);
+  }
+}
+```
+
+### Validation Error Hook
+
+Use the `onValidationError` hook to handle validation errors:
+
+```typescript
+const callApi = createFetchClient({
+  baseURL: 'https://api.example.com',
+  onValidationError: ({ error, request, options }) => {
+    console.error('Validation failed:', error.issueCause);
+    console.error('Issues:', error.issues);
+    
+    // Send to error tracking
+    trackError({
+      type: 'validation',
+      cause: error.issueCause,
+      issues: error.issues,
+      url: options.fullURL,
+    });
+  },
+});
+```
+
+Source: [validation.ts:102-111](~/workspace/source/packages/callapi/src/validation.ts)
+
+## Type Inference
+
+CallApi automatically infers types from your schemas:
+
+```typescript
+import { z } from 'zod';
+
+const UserSchema = z.object({
+  id: z.number(),
+  name: z.string(),
+});
+
+const callApi = createFetchClient({
+  schema: {
+    routes: {
+      '/users/:id': {
+        data: UserSchema,
+      },
+    },
+  },
+});
+
+// TypeScript infers: { id: number; name: string }
+const { data } = await callApi('/users/123');
+```
+
+### Schema Type Helpers
+
+```typescript
+import type { InferSchemaOutput, InferSchemaInput } from 'callapi';
+
+type UserOutput = InferSchemaOutput<typeof UserSchema>;
+type UserInput = InferSchemaInput<typeof UserSchema>;
+```
+
+Source: [validation.ts:33-53](~/workspace/source/packages/callapi/src/validation.ts)
+
+## Best Practices
+
+<AccordionGroup>
+
+<Accordion title="Define Reusable Schemas">
+
+Create shared schema definitions:
+
+```typescript
+const PaginationParams = z.object({
+  page: z.number().int().positive(),
+  limit: z.number().int().min(1).max(100),
+});
+
+const ErrorResponse = z.object({
+  message: z.string(),
+  code: z.string(),
+});
+
+const callApi = createFetchClient({
+  schema: {
+    routes: {
+      '/users': {
+        query: PaginationParams,
+        errorData: ErrorResponse,
+      },
+      '/posts': {
+        query: PaginationParams,
+        errorData: ErrorResponse,
+      },
+    },
+  },
+});
+```
+
+</Accordion>
+
+<Accordion title="Use Strict Mode for Type Safety">
+
+Enable strict mode to catch typos and undefined routes:
+
+```typescript
+const callApi = createFetchClient({
+  schema: {
+    config: { strict: true },
+    routes: {
+      '/users': UserSchema,
+    },
+  },
+});
+
+// TypeScript error + runtime error
+await callApi('/userz'); // Typo caught!
+```
+
+</Accordion>
+
+<Accordion title="Validate Early">
+
+Validate request data before sending:
+
+```typescript
+schema: {
+  routes: {
+    'POST /users': {
+      body: z.object({
+        email: z.string().email(),
+        age: z.number().min(18),
+      }),
+    },
+  },
+}
+
+// Validation fails before request is sent
+await callApi('POST /users', {
+  body: { email: 'invalid', age: 10 },
+});
+```
+
+</Accordion>
+
+<Accordion title="Handle Validation in Hooks">
+
+Centralize validation error handling:
+
+```typescript
+const callApi = createFetchClient({
+  baseURL: 'https://api.example.com',
+  onValidationError: ({ error }) => {
+    // Show user-friendly messages
+    toast.error(`Invalid ${error.issueCause}: ${error.message}`);
+    
+    // Log for debugging
+    logger.error('Validation failed', {
+      cause: error.issueCause,
+      issues: error.issues,
+    });
+  },
+});
+```
+
+</Accordion>
+
+</AccordionGroup>
+
+## Performance Considerations
+
+- **Disable validation in production** if needed using `disableRuntimeValidation`
+- **Use compiled schemas** with libraries that support compilation (e.g., Zod's `.preprocess()`)
+- **Cache schema instances** to avoid recreation on each request
+- **Consider transformation costs** when using `disableRuntimeValidationTransform`
+
+<Note>
+Validation adds runtime overhead. For performance-critical paths, consider using TypeScript-only validation or disabling runtime validation after initial development.
+</Note>

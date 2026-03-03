@@ -1,80 +1,526 @@
 ---
-title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+title: Quick Start
+description: Get up and running with CallApi in under 5 minutes
 ---
 
-## Get started in three steps
+## Installation
 
-Get your documentation site running locally and make your first customization.
+Install CallApi using your preferred package manager:
 
-### Step 1: Set up your local environment
+<CodeGroup>
 
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
-    
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
-    
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
+```bash npm
+npm install @zayne-labs/callapi
+```
 
-### Step 2: Deploy your changes
+```bash yarn
+yarn add @zayne-labs/callapi
+```
 
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
-    
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
+```bash pnpm
+pnpm add @zayne-labs/callapi
+```
 
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
+```bash bun
+bun add @zayne-labs/callapi
+```
 
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
+</CodeGroup>
 
-### Step 3: Go live
+## Your First Request
 
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
+The simplest way to use CallApi is with the `callApi` function:
 
-## Next steps
+```javascript
+import { callApi } from "@zayne-labs/callapi";
 
-Now that you have your docs running, explore these key features:
+const { data, error } = await callApi("/api/users");
 
-<CardGroup cols={2}>
+if (error) {
+  console.error("Request failed:", error.message);
+} else {
+  console.log("Users:", data);
+}
+```
 
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
+<Tip>
+  By default, CallApi uses `resultMode: "result"` which returns an object with `{ data, error, response }`. No thrown errors unless you want them!
+</Tip>
 
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
+## Making Different Request Types
 
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
+<Steps>
 
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
+<Step title="GET Request">
 
-</CardGroup>
+GET requests are the default. Just pass a URL:
+
+```javascript
+const { data } = await callApi("/api/users");
+```
+
+With query parameters:
+
+```javascript
+const { data } = await callApi("/api/users", {
+  query: { page: 1, limit: 10 },
+});
+// → GET /api/users?page=1&limit=10
+```
+
+</Step>
+
+<Step title="POST Request">
+
+Send JSON data:
+
+```javascript
+const { data, error } = await callApi("/api/users", {
+  method: "POST",
+  body: {
+    name: "John Doe",
+    email: "john@example.com",
+  },
+});
+```
+
+Or use the method prefix shorthand:
+
+```javascript
+const { data, error } = await callApi("@post/api/users", {
+  body: {
+    name: "John Doe",
+    email: "john@example.com",
+  },
+});
+```
+
+</Step>
+
+<Step title="PUT/PATCH Request">
+
+Update resources:
+
+```javascript
+const { data } = await callApi("@put/api/users/:id", {
+  params: { id: 123 },
+  body: {
+    name: "Jane Doe",
+  },
+});
+// → PUT /api/users/123
+```
+
+</Step>
+
+<Step title="DELETE Request">
+
+Delete resources:
+
+```javascript
+const { data } = await callApi("@delete/api/users/:id", {
+  params: { id: 123 },
+});
+// → DELETE /api/users/123
+```
+
+</Step>
+
+</Steps>
+
+## Creating a Configured Client
+
+For reusable configuration, create a client with `createFetchClient`:
+
+```javascript
+import { createFetchClient } from "@zayne-labs/callapi";
+
+const api = createFetchClient({
+  baseURL: "https://api.example.com",
+  headers: {
+    "Content-Type": "application/json",
+  },
+  timeout: 10000, // 10 seconds
+});
+
+// Now use it throughout your app
+const { data } = await api("/users");
+// → GET https://api.example.com/users
+```
 
 <Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
+  All options set in `createFetchClient` can be overridden on a per-request basis.
 </Note>
+
+## Adding Authentication
+
+CallApi has built-in authentication helpers:
+
+<Tabs>
+  <Tab title="Bearer Token">
+
+```javascript
+const api = createFetchClient({
+  baseURL: "https://api.example.com",
+  auth: {
+    type: "Bearer",
+    value: "your-token-here",
+  },
+});
+
+// Or use a function for dynamic tokens
+const api = createFetchClient({
+  baseURL: "https://api.example.com",
+  auth: {
+    type: "Bearer",
+    value: () => localStorage.getItem("token"),
+  },
+});
+```
+
+  </Tab>
+  <Tab title="Basic Auth">
+
+```javascript
+const api = createFetchClient({
+  baseURL: "https://api.example.com",
+  auth: {
+    type: "Basic",
+    username: "user",
+    password: "pass123",
+  },
+});
+```
+
+  </Tab>
+  <Tab title="Custom Auth">
+
+```javascript
+const api = createFetchClient({
+  baseURL: "https://api.example.com",
+  auth: {
+    type: "Custom",
+    prefix: "Token",
+    value: "your-token-here",
+  },
+});
+// → Authorization: Token your-token-here
+```
+
+  </Tab>
+  <Tab title="Shorthand">
+
+```javascript
+// Defaults to Bearer token
+const api = createFetchClient({
+  baseURL: "https://api.example.com",
+  auth: "your-token-here",
+});
+// → Authorization: Bearer your-token-here
+```
+
+  </Tab>
+</Tabs>
+
+## Handling Errors
+
+CallApi provides structured error handling:
+
+```javascript
+import { callApi, HTTPError, ValidationError } from "@zayne-labs/callapi";
+
+const { data, error } = await callApi("/api/users");
+
+if (error) {
+  if (error instanceof HTTPError) {
+    // HTTP error (4xx, 5xx)
+    console.error("HTTP Error:", error.response.status);
+    console.error("Error data:", error.errorData);
+  } else if (error instanceof ValidationError) {
+    // Schema validation failed
+    console.error("Validation failed:", error.errorData);
+  } else {
+    // Network error, timeout, etc.
+    console.error("Request error:", error.message);
+  }
+}
+```
+
+<Tip>
+  Want errors to throw instead? Set `throwOnError: true` in your config or per-request.
+</Tip>
+
+## Adding Retry Logic
+
+Automatic retries with exponential backoff:
+
+```javascript
+const { data } = await callApi("/api/data", {
+  retryAttempts: 3,
+  retryStrategy: "exponential",
+  retryDelay: 1000, // Base delay: 1 second
+  retryStatusCodes: [408, 429, 500, 502, 503, 504],
+});
+```
+
+With custom retry logic:
+
+```javascript
+const { data } = await callApi("/api/data", {
+  retryAttempts: 3,
+  shouldRetry: ({ error, response, attemptCount }) => {
+    // Custom retry logic
+    if (attemptCount >= 3) return false;
+    if (response?.status === 429) return true;
+    return false;
+  },
+});
+```
+
+## TypeScript Support
+
+CallApi is TypeScript-first with full type inference:
+
+```typescript
+import { callApi } from "@zayne-labs/callapi";
+
+interface User {
+  id: number;
+  name: string;
+  email: string;
+}
+
+const { data, error } = await callApi<User>("/api/users/1");
+
+if (data) {
+  console.log(data.name); // Fully typed!
+}
+```
+
+For runtime validation, use schemas:
+
+```typescript
+import { createFetchClient } from "@zayne-labs/callapi";
+import { defineSchema } from "@zayne-labs/callapi/utils";
+import { z } from "zod";
+
+const userSchema = z.object({
+  id: z.number(),
+  name: z.string(),
+  email: z.string().email(),
+});
+
+const api = createFetchClient({
+  baseURL: "https://api.example.com",
+  schema: defineSchema({
+    "/users/:id": {
+      data: userSchema,
+    },
+  }),
+});
+
+const { data } = await api("/users/:id", {
+  params: { id: 1 },
+});
+// data is typed AND validated at runtime
+```
+
+## Request Deduplication
+
+By default, CallApi cancels duplicate in-flight requests:
+
+```javascript
+// User clicks button multiple times
+const req1 = callApi("/api/user"); // Starts request
+const req2 = callApi("/api/user"); // Cancels req1, starts new request
+const req3 = callApi("/api/user"); // Cancels req2, starts new request
+```
+
+Or share the response between duplicate requests:
+
+```javascript
+const api = createFetchClient({
+  dedupeStrategy: "defer",
+});
+
+const req1 = api("/api/user"); // Starts request
+const req2 = api("/api/user"); // Waits for req1, shares result
+const req3 = api("/api/user"); // Waits for req1, shares result
+
+const [result1, result2, result3] = await Promise.all([req1, req2, req3]);
+// All three get the same response
+```
+
+## Using Lifecycle Hooks
+
+Hook into the request lifecycle:
+
+```javascript
+const api = createFetchClient({
+  baseURL: "https://api.example.com",
+  
+  onRequest: ({ request }) => {
+    console.log("→ Sending request to:", request.url);
+  },
+  
+  onSuccess: ({ data, response }) => {
+    console.log("✓ Success! Status:", response.status);
+  },
+  
+  onError: ({ error }) => {
+    console.error("✗ Request failed:", error.message);
+  },
+});
+```
+
+<Note>
+  Hooks can be async and are composable. Multiple hooks of the same type will be executed in order.
+</Note>
+
+## Advanced: Custom Response Types
+
+Handle different response types:
+
+<Tabs>
+  <Tab title="Blob (Images, Files)">
+
+```javascript
+const { data: imageBlob } = await callApi("/api/avatar.png", {
+  responseType: "blob",
+});
+
+const imageUrl = URL.createObjectURL(imageBlob);
+```
+
+  </Tab>
+  <Tab title="Stream (Large Files)">
+
+```javascript
+const { data: stream } = await callApi("/api/large-file", {
+  responseType: "stream",
+  onResponseStream: ({ event }) => {
+    console.log(`Downloaded: ${event.loaded} / ${event.total} bytes`);
+    console.log(`Progress: ${event.progress}%`);
+  },
+});
+```
+
+  </Tab>
+  <Tab title="ArrayBuffer (Binary Data)">
+
+```javascript
+const { data: buffer } = await callApi("/api/binary", {
+  responseType: "arrayBuffer",
+});
+
+const uint8Array = new Uint8Array(buffer);
+```
+
+  </Tab>
+  <Tab title="Text (Plain Text)">
+
+```javascript
+const { data: text } = await callApi("/api/readme", {
+  responseType: "text",
+});
+
+console.log(text);
+```
+
+  </Tab>
+</Tabs>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="API Reference" icon="book" href="/api/call-api">
+    Explore all configuration options and methods
+  </Card>
+  <Card title="Advanced Features" icon="rocket" href="/advanced/schema-validation">
+    Learn about plugins, middlewares, and advanced patterns
+  </Card>
+  <Card title="Schema Validation" icon="shield-check" href="/advanced/schema-validation">
+    Master type safety with schema validation
+  </Card>
+  <Card title="Integrations" icon="puzzle-piece" href="/integrations/react-query">
+    Integrate with React Query and more
+  </Card>
+</CardGroup>
+
+## Common Patterns
+
+### Global Error Handling
+
+```javascript
+const api = createFetchClient({
+  baseURL: "https://api.example.com",
+  onError: ({ error }) => {
+    // Send to error tracking service
+    if (window.Sentry) {
+      Sentry.captureException(error);
+    }
+    
+    // Show user-friendly error
+    if (error instanceof HTTPError) {
+      showToast(`Server error: ${error.response.status}`);
+    } else {
+      showToast("Network error. Please try again.");
+    }
+  },
+});
+```
+
+### Request/Response Logging
+
+```javascript
+const api = createFetchClient({
+  baseURL: "https://api.example.com",
+  onRequest: ({ request, options }) => {
+    console.group(`→ ${request.method} ${options.fullURL}`);
+    console.log("Headers:", Object.fromEntries(request.headers));
+    console.groupEnd();
+  },
+  onResponse: ({ response, data, error }) => {
+    console.group(`← ${response.status} ${response.statusText}`);
+    console.log("Data:", data);
+    if (error) console.error("Error:", error);
+    console.groupEnd();
+  },
+});
+```
+
+### Dynamic Base URL
+
+```javascript
+const api = createFetchClient({
+  baseURL: () => {
+    // Use different API based on environment
+    return process.env.NODE_ENV === "production"
+      ? "https://api.production.com"
+      : "https://api.staging.com";
+  },
+});
+```
+
+### Automatic Token Refresh
+
+```javascript
+const api = createFetchClient({
+  baseURL: "https://api.example.com",
+  auth: {
+    type: "Bearer",
+    value: async () => {
+      const token = localStorage.getItem("token");
+      const isExpired = checkIfTokenExpired(token);
+      
+      if (isExpired) {
+        const newToken = await refreshToken();
+        localStorage.setItem("token", newToken);
+        return newToken;
+      }
+      
+      return token;
+    },
+  },
+});
+```

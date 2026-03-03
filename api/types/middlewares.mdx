@@ -1,0 +1,437 @@
+---
+title: Middlewares
+description: Fetch middleware for intercepting requests at the network layer
+---
+
+## Overview
+
+The `Middlewares` interface provides low-level network interception capabilities. Unlike hooks which run around the request/response lifecycle, middlewares wrap the actual fetch implementation, giving you complete control over network calls.
+
+## Type Definition
+
+```typescript
+interface Middlewares<TCallApiContext extends CallApiContext = DefaultCallApiContext> {
+  fetchMiddleware?: (context: FetchMiddlewareContext) => FetchImpl;
+}
+
+type FetchImpl = (input: string | Request | URL, init?: RequestInit) => Promise<Response>
+
+type FetchMiddlewareContext<TCallApiContext extends CallApiContext> = RequestContext<TCallApiContext> & {
+  fetchImpl: FetchImpl;
+}
+```
+
+## fetchMiddleware
+
+<ParamField path="fetchMiddleware" type="(context: FetchMiddlewareContext) => FetchImpl">
+  Wraps the fetch implementation to intercept requests at the network layer.
+
+  Takes a context object containing the current fetch function and returns a new fetch function. Multiple middlewares compose in order: plugins → base config → per-request.
+
+  **Key Differences from customFetchImpl:**
+  - Middleware can call through to the original fetch
+  - Multiple middlewares compose together
+  - Middleware has access to full request context
+
+  ```typescript
+  fetchMiddleware: ({ fetchImpl, options }) => async (input, init) => {
+    // Do something before fetch
+    console.log('Fetching:', input);
+    
+    // Call the original fetch
+    const response = await fetchImpl(input, init);
+    
+    // Do something after fetch
+    console.log('Response:', response.status);
+    
+    return response;
+  }
+  ```
+</ParamField>
+
+## Middleware Context
+
+The middleware function receives a context object with:
+
+<ParamField path="fetchImpl" type="FetchImpl" required>
+  The current fetch implementation. Call this to proceed with the request.
+  
+  In a middleware chain, this is the next middleware (or the final fetch if no more middlewares).
+</ParamField>
+
+<ParamField path="baseConfig" type="BaseCallApiConfig" required>
+  Base configuration from createFetchClient.
+</ParamField>
+
+<ParamField path="config" type="CallApiConfig" required>
+  Instance-specific configuration.
+</ParamField>
+
+<ParamField path="options" type="CallApiExtraOptions" required>
+  Merged extra options.
+</ParamField>
+
+<ParamField path="request" type="CallApiRequestOptions" required>
+  Request options (method, headers, body, etc.).
+</ParamField>
+
+## Use Cases
+
+### Response Caching
+
+Cache responses to avoid duplicate requests:
+
+```typescript
+const cache = new Map<string, Response>();
+
+const api = createFetchClient({
+  baseURL: 'https://api.example.com',
+  fetchMiddleware: ({ fetchImpl }) => async (input, init) => {
+    const key = input.toString();
+    const method = init?.method || 'GET';
+    
+    // Only cache GET requests
+    if (method.toUpperCase() === 'GET') {
+      const cached = cache.get(key);
+      if (cached) {
+        console.log('Returning cached response');
+        return cached.clone();
+      }
+    }
+    
+    const response = await fetchImpl(input, init);
+    
+    if (response.ok && method.toUpperCase() === 'GET') {
+      cache.set(key, response.clone());
+    }
+    
+    return response;
+  }
+});
+```
+
+### Offline Mode
+
+Handle offline scenarios gracefully:
+
+```typescript
+const api = createFetchClient({
+  baseURL: 'https://api.example.com',
+  fetchMiddleware: ({ fetchImpl }) => async (input, init) => {
+    if (!navigator.onLine) {
+      console.warn('User is offline');
+      return new Response(
+        JSON.stringify({ error: 'No internet connection' }),
+        { 
+          status: 503,
+          statusText: 'Service Unavailable',
+          headers: { 'Content-Type': 'application/json' }
+        }
+      );
+    }
+    
+    return fetchImpl(input, init);
+  }
+});
+```
+
+### Request Mocking
+
+Mock responses for testing:
+
+```typescript
+const mockData = {
+  '/users': [{ id: '1', name: 'John' }],
+  '/posts': [{ id: '1', title: 'Hello' }]
+};
+
+const api = createFetchClient({
+  baseURL: 'https://api.example.com',
+  fetchMiddleware: ({ fetchImpl }) => async (input, init) => {
+    const url = new URL(input.toString());
+    const path = url.pathname;
+    
+    // Return mock data if available
+    if (mockData[path]) {
+      console.log('Returning mock data for:', path);
+      return new Response(JSON.stringify(mockData[path]), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+    
+    // Otherwise, make real request
+    return fetchImpl(input, init);
+  }
+});
+```
+
+### Request Timing
+
+Measure request duration:
+
+```typescript
+const api = createFetchClient({
+  baseURL: 'https://api.example.com',
+  fetchMiddleware: ({ fetchImpl }) => async (input, init) => {
+    const startTime = Date.now();
+    
+    try {
+      const response = await fetchImpl(input, init);
+      const duration = Date.now() - startTime;
+      
+      console.log(`Request completed in ${duration}ms:`, input);
+      
+      // Add timing header to response
+      response.headers.set('X-Response-Time', `${duration}ms`);
+      
+      return response;
+    } catch (error) {
+      const duration = Date.now() - startTime;
+      console.error(`Request failed after ${duration}ms:`, error);
+      throw error;
+    }
+  }
+});
+```
+
+### Request Queuing
+
+Limit concurrent requests:
+
+```typescript
+class RequestQueue {
+  private queue: Array<() => Promise<any>> = [];
+  private active = 0;
+  private maxConcurrent = 3;
+  
+  async add<T>(fn: () => Promise<T>): Promise<T> {
+    while (this.active >= this.maxConcurrent) {
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    
+    this.active++;
+    try {
+      return await fn();
+    } finally {
+      this.active--;
+    }
+  }
+}
+
+const queue = new RequestQueue();
+
+const api = createFetchClient({
+  baseURL: 'https://api.example.com',
+  fetchMiddleware: ({ fetchImpl }) => async (input, init) => {
+    return queue.add(() => fetchImpl(input, init));
+  }
+});
+```
+
+### Response Transformation
+
+Modify responses before they're processed:
+
+```typescript
+const api = createFetchClient({
+  baseURL: 'https://api.example.com',
+  fetchMiddleware: ({ fetchImpl }) => async (input, init) => {
+    const response = await fetchImpl(input, init);
+    
+    // Transform error responses to success with error data
+    if (!response.ok) {
+      const errorData = await response.json();
+      return new Response(
+        JSON.stringify({ success: false, error: errorData }),
+        {
+          status: 200, // Transform to 200
+          headers: response.headers
+        }
+      );
+    }
+    
+    return response;
+  }
+});
+```
+
+### Request Deduplication
+
+Prevent duplicate concurrent requests:
+
+```typescript
+const pendingRequests = new Map<string, Promise<Response>>();
+
+const api = createFetchClient({
+  baseURL: 'https://api.example.com',
+  fetchMiddleware: ({ fetchImpl }) => async (input, init) => {
+    const key = `${init?.method || 'GET'}:${input.toString()}`;
+    
+    // Check if request is already pending
+    const pending = pendingRequests.get(key);
+    if (pending) {
+      console.log('Deduplicating request:', key);
+      return pending;
+    }
+    
+    // Make request and cache promise
+    const promise = fetchImpl(input, init);
+    pendingRequests.set(key, promise);
+    
+    try {
+      const response = await promise;
+      return response;
+    } finally {
+      pendingRequests.delete(key);
+    }
+  }
+});
+```
+
+### Logging Middleware
+
+Detailed request/response logging:
+
+```typescript
+const api = createFetchClient({
+  baseURL: 'https://api.example.com',
+  fetchMiddleware: ({ fetchImpl, request, options }) => async (input, init) => {
+    const url = input.toString();
+    const method = init?.method || 'GET';
+    
+    console.group(`${method} ${url}`);
+    console.log('Headers:', init?.headers);
+    console.log('Body:', init?.body);
+    console.log('Options:', options);
+    
+    const startTime = Date.now();
+    
+    try {
+      const response = await fetchImpl(input, init);
+      const duration = Date.now() - startTime;
+      
+      console.log('Status:', response.status, response.statusText);
+      console.log('Duration:', `${duration}ms`);
+      console.log('Response Headers:', Object.fromEntries(response.headers.entries()));
+      console.groupEnd();
+      
+      return response;
+    } catch (error) {
+      const duration = Date.now() - startTime;
+      
+      console.error('Error:', error);
+      console.log('Duration:', `${duration}ms`);
+      console.groupEnd();
+      
+      throw error;
+    }
+  }
+});
+```
+
+## Composing Multiple Middlewares
+
+Middlewares compose from innermost to outermost:
+
+```typescript
+const api = createFetchClient({
+  baseURL: 'https://api.example.com',
+  plugins: [
+    {
+      id: 'logger',
+      name: 'Logger',
+      middlewares: {
+        fetchMiddleware: ({ fetchImpl }) => async (input, init) => {
+          console.log('1. Plugin middleware - before');
+          const response = await fetchImpl(input, init);
+          console.log('1. Plugin middleware - after');
+          return response;
+        }
+      }
+    }
+  ],
+  fetchMiddleware: ({ fetchImpl }) => async (input, init) => {
+    console.log('2. Base middleware - before');
+    const response = await fetchImpl(input, init);
+    console.log('2. Base middleware - after');
+    return response;
+  }
+});
+
+const instance = api.create({
+  fetchMiddleware: ({ fetchImpl }) => async (input, init) => {
+    console.log('3. Instance middleware - before');
+    const response = await fetchImpl(input, init);
+    console.log('3. Instance middleware - after');
+    return response;
+  }
+});
+
+// Output:
+// 1. Plugin middleware - before
+// 2. Base middleware - before
+// 3. Instance middleware - before
+// [actual fetch happens]
+// 3. Instance middleware - after
+// 2. Base middleware - after
+// 1. Plugin middleware - after
+```
+
+## Best Practices
+
+1. **Always call through to fetchImpl**: Unless you're intentionally short-circuiting the request (like with caching or mocking), always call the original `fetchImpl`.
+
+2. **Clone responses when needed**: If you need to read the response body in middleware and let it continue through the chain, clone it first:
+   ```typescript
+   const clone = response.clone();
+   const data = await clone.json();
+   return response; // Original response continues
+   ```
+
+3. **Handle errors gracefully**: Wrap fetch calls in try-catch to handle and potentially transform errors:
+   ```typescript
+   try {
+     return await fetchImpl(input, init);
+   } catch (error) {
+     // Handle or transform error
+     throw error;
+   }
+   ```
+
+4. **Use middleware for network-level concerns**: Caching, mocking, offline handling, request queuing, etc.
+
+5. **Use hooks for application-level concerns**: Authentication, logging, error handling, etc.
+
+## Middleware vs Custom Fetch vs Hooks
+
+| Feature | Middleware | customFetchImpl | Hooks |
+|---------|-----------|-----------------|-------|
+| Composable | ✓ | ✗ | ✓ |
+| Access to context | ✓ | ✗ | ✓ |
+| Can modify request | ✓ | ✓ | ✓ |
+| Can short-circuit | ✓ | ✓ | ✗ |
+| Network-level | ✓ | ✓ | ✗ |
+| Application-level | ✗ | ✗ | ✓ |
+
+**Use middleware when:**
+- You need to compose multiple fetch interceptors
+- You need access to request context
+- You're building a reusable plugin
+- You need to cache, mock, or queue requests
+
+**Use customFetchImpl when:**
+- You need complete control over fetch
+- You're replacing fetch entirely (e.g., for testing)
+- You don't need composition
+
+**Use hooks when:**
+- You need application-level logic
+- You're handling authentication, logging, metrics
+- You need lifecycle events (success, error, retry)
+
+## See Also
+
+- [Hooks](/api/types/hooks) - Lifecycle hooks for application-level logic
+- [CallApiPlugin](/api/types/plugins) - Plugin interface that can include middlewares
+- [CallApiExtraOptions](/api/config/extra-options) - Configuration options including customFetchImpl

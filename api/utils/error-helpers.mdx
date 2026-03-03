@@ -1,0 +1,347 @@
+---
+title: Error Helpers
+description: Type guard utilities for identifying and handling different error types
+---
+
+CallApi provides type guard utilities to help you identify and handle different types of errors in your API calls. These helpers make error handling more predictable and type-safe.
+
+## Error Types
+
+CallApi distinguishes between three main error types:
+
+1. **HTTPError** - Server responded with an error status code (4xx, 5xx)
+2. **ValidationError** - Request/response validation failed
+3. **JavaScriptError** - Network errors, timeouts, or other JavaScript errors
+
+## isHTTPError
+
+Checks if an error is an HTTP error from the server.
+
+### Import
+
+```ts
+import { isHTTPError } from "@zayne-labs/callapi/utils";
+```
+
+### Signature
+
+```ts
+function isHTTPError<TErrorData>(
+  error: CallApiResultErrorVariant<TErrorData>["error"] | null
+): error is PossibleHTTPError<TErrorData>
+```
+
+### Usage
+
+```ts
+import { isHTTPError } from "@zayne-labs/callapi/utils";
+
+const result = await api("/users/123");
+
+if (result.error) {
+  if (isHTTPError(result.error)) {
+    console.log("HTTP Status:", result.error.response.status);
+    console.log("Error Data:", result.error.errorData);
+    
+    // Handle specific status codes
+    if (result.error.response.status === 404) {
+      console.log("User not found");
+    } else if (result.error.response.status === 401) {
+      console.log("Unauthorized");
+    }
+  }
+}
+```
+
+### HTTPError Properties
+
+When `isHTTPError` returns `true`, the error has these properties:
+
+<Properties>
+  <Property name="name" type="'HTTPError'">
+    The error name is always "HTTPError"
+  </Property>
+  <Property name="message" type="string">
+    Error message from the server or default message
+  </Property>
+  <Property name="response" type="Response">
+    The Response object from the failed request
+  </Property>
+  <Property name="errorData" type="TErrorData">
+    Parsed error data from the response body
+  </Property>
+</Properties>
+
+## isValidationError
+
+Checks if an error is a validation error.
+
+### Import
+
+```ts
+import { isValidationError } from "@zayne-labs/callapi/utils";
+```
+
+### Signature
+
+```ts
+function isValidationError(
+  error: CallApiResultErrorVariant<unknown>["error"] | null
+): error is PossibleValidationError
+```
+
+### Usage
+
+```ts
+import { isValidationError } from "@zayne-labs/callapi/utils";
+import { z } from "zod";
+
+const userSchema = z.object({
+  name: z.string().min(2),
+  email: z.string().email(),
+});
+
+const result = await api("/users", {
+  method: "POST",
+  body: {
+    name: "J",
+    email: "invalid",
+  },
+  schema: {
+    body: userSchema,
+  },
+});
+
+if (result.error) {
+  if (isValidationError(result.error)) {
+    console.log("Validation failed:", result.error.issueCause);
+    
+    // Access detailed validation issues
+    result.error.errorData.forEach((issue) => {
+      console.log(`- ${issue.message} at ${issue.path?.join(".") || "root"}`);
+    });
+  }
+}
+```
+
+### ValidationError Properties
+
+When `isValidationError` returns `true`, the error has these properties:
+
+<Properties>
+  <Property name="name" type="'ValidationError'">
+    The error name is always "ValidationError"
+  </Property>
+  <Property name="message" type="string">
+    A formatted message describing all validation issues
+  </Property>
+  <Property name="issueCause" type="string">
+    Identifies which validation failed (e.g., "body", "response", "toFormData")
+  </Property>
+  <Property name="errorData" type="StandardSchemaV1.Issue[]">
+    Array of validation issues with detailed information
+  </Property>
+  <Property name="response" type="Response | null">
+    The Response object if validation failed on the response, null otherwise
+  </Property>
+</Properties>
+
+## isJavascriptError
+
+Checks if an error is a JavaScript error (network error, timeout, etc.).
+
+### Import
+
+```ts
+import { isJavascriptError } from "@zayne-labs/callapi/utils";
+```
+
+### Signature
+
+```ts
+function isJavascriptError(
+  error: CallApiResultErrorVariant<unknown>["error"] | null
+): error is PossibleJavaScriptError
+```
+
+### Usage
+
+```ts
+import { isJavascriptError } from "@zayne-labs/callapi/utils";
+
+const result = await api("/users", {
+  timeout: 5000,
+});
+
+if (result.error) {
+  if (isJavascriptError(result.error)) {
+    console.log("JavaScript error:", result.error.name);
+    console.log("Message:", result.error.message);
+    
+    // Check for specific error types
+    if (result.error.name === "AbortError") {
+      console.log("Request was aborted or timed out");
+    } else if (result.error.name === "TypeError") {
+      console.log("Network error or request failed");
+    }
+  }
+}
+```
+
+### Common JavaScript Errors
+
+- **AbortError**: Request was aborted or timed out
+- **TypeError**: Network error, CORS issue, or fetch failed
+- **Error**: Generic JavaScript error
+
+## Class Instance Checkers
+
+CallApi also provides checkers for error class instances:
+
+### isHTTPErrorInstance
+
+```ts
+import { isHTTPErrorInstance } from "@zayne-labs/callapi/utils";
+
+try {
+  // Some code that might throw
+} catch (error) {
+  if (isHTTPErrorInstance(error)) {
+    console.log("Caught HTTPError:", error.response.status);
+  }
+}
+```
+
+### isValidationErrorInstance
+
+```ts
+import { isValidationErrorInstance } from "@zayne-labs/callapi/utils";
+
+try {
+  // Some code that might throw
+} catch (error) {
+  if (isValidationErrorInstance(error)) {
+    console.log("Caught ValidationError:", error.issueCause);
+    console.log("Issues:", error.errorData);
+  }
+}
+```
+
+## Complete Error Handling Example
+
+```ts
+import {
+  isHTTPError,
+  isValidationError,
+  isJavascriptError,
+} from "@zayne-labs/callapi/utils";
+
+const handleUserRequest = async (userId: string) => {
+  const result = await api(`/users/${userId}`);
+
+  if (result.error) {
+    if (isHTTPError(result.error)) {
+      // Handle HTTP errors
+      const status = result.error.response.status;
+      
+      switch (status) {
+        case 404:
+          return { error: "User not found" };
+        case 401:
+          return { error: "Unauthorized" };
+        case 403:
+          return { error: "Access denied" };
+        case 500:
+          return { error: "Server error" };
+        default:
+          return { error: `HTTP error: ${status}` };
+      }
+    }
+    
+    if (isValidationError(result.error)) {
+      // Handle validation errors
+      const issues = result.error.errorData.map((issue) => ({
+        field: issue.path?.join("."),
+        message: issue.message,
+      }));
+      
+      return { error: "Validation failed", issues };
+    }
+    
+    if (isJavascriptError(result.error)) {
+      // Handle network/JavaScript errors
+      if (result.error.name === "AbortError") {
+        return { error: "Request timeout" };
+      }
+      return { error: "Network error" };
+    }
+  }
+
+  // Success case
+  return { data: result.data };
+};
+```
+
+## With Hooks
+
+Use error type guards in lifecycle hooks:
+
+```ts
+import { createFetchClient } from "@zayne-labs/callapi";
+import { isHTTPError, isValidationError } from "@zayne-labs/callapi/utils";
+
+const api = createFetchClient({
+  baseURL: "https://api.example.com",
+  
+  onError: (ctx) => {
+    if (isHTTPError(ctx.error)) {
+      console.error("HTTP Error:", {
+        status: ctx.error.response.status,
+        url: ctx.options.fullURL,
+        data: ctx.error.errorData,
+      });
+    } else if (isValidationError(ctx.error)) {
+      console.error("Validation Error:", {
+        cause: ctx.error.issueCause,
+        issues: ctx.error.errorData,
+      });
+    } else {
+      console.error("JavaScript Error:", ctx.error);
+    }
+  },
+});
+```
+
+## Type Safety
+
+All error helpers provide full TypeScript type narrowing:
+
+```ts
+const result = await api("/users/123");
+
+if (result.error) {
+  // error type: HTTPError | ValidationError | JavaScriptError
+  
+  if (isHTTPError(result.error)) {
+    // TypeScript knows error.response and error.errorData exist
+    const status = result.error.response.status; // ✓ Type-safe
+  }
+  
+  if (isValidationError(result.error)) {
+    // TypeScript knows error.errorData and error.issueCause exist
+    const issues = result.error.errorData; // ✓ Type-safe
+  }
+  
+  if (isJavascriptError(result.error)) {
+    // TypeScript knows it's a standard Error
+    const message = result.error.message; // ✓ Type-safe
+  }
+}
+```
+
+## See Also
+
+- [Error Handling Guide](/guides/error-handling) - Comprehensive error handling patterns
+- [HTTPError](/api/errors/http-error) - HTTPError class reference
+- [ValidationError](/api/errors/validation-error) - ValidationError class reference
+- [Hooks](/api/hooks) - Using error hooks

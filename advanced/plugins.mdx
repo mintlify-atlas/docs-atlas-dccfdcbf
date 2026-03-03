@@ -1,0 +1,764 @@
+---
+title: 'Plugin System'
+description: 'Extend CallApi with reusable plugins'
+icon: 'puzzle-piece'
+---
+
+## Overview
+
+Plugins are self-contained packages that extend CallApi's functionality. They can provide hooks, middleware, schemas, and additional configuration options. Plugins enable code reuse and composable API client features.
+
+## Plugin Structure
+
+```typescript
+interface CallApiPlugin {
+  id: string;                    // Unique plugin identifier
+  name: string;                  // Human-readable name
+  version?: string;              // Plugin version
+  description?: string;          // Plugin description
+  
+  setup?: (context) => PluginInitResult | void;
+  hooks?: PluginHooks | ((context) => PluginHooks | void);
+  middlewares?: PluginMiddlewares | ((context) => PluginMiddlewares | void);
+  schema?: BaseCallApiSchemaAndConfig;
+  defineExtraOptions?: () => ExtraOptions;
+}
+```
+
+Source: [plugins.ts:60-115](~/workspace/source/packages/callapi/src/plugins.ts)
+
+## Creating a Plugin
+
+Use `definePlugin` to create type-safe plugins:
+
+```typescript
+import { definePlugin } from 'callapi';
+
+export const myPlugin = definePlugin({
+  id: 'my-plugin',
+  name: 'My Plugin',
+  version: '1.0.0',
+  description: 'Does something useful',
+  
+  setup: (ctx) => {
+    console.log('Plugin initialized for:', ctx.initURL);
+  },
+  
+  hooks: {
+    onRequest: ({ request }) => {
+      request.headers['X-My-Plugin'] = 'active';
+    },
+  },
+});
+```
+
+## Plugin Lifecycle
+
+### Setup Hook
+
+The `setup` function runs when the plugin initializes, before any request is made:
+
+```typescript
+interface PluginSetupContext extends RequestContext {
+  initURL: string;
+}
+
+interface PluginInitResult {
+  initURL?: InitURLOrURLObject;  // Modify request URL
+  request?: CallApiRequestOptions; // Modify request
+  options?: CallApiExtraOptions;   // Modify options
+  baseConfig?: BaseCallApiConfig;  // Access base config
+  config?: CallApiConfig;          // Access instance config
+}
+```
+
+Source: [plugins.ts:26-34](~/workspace/source/packages/callapi/src/plugins.ts)
+
+### Dynamic Configuration
+
+Setup can modify request configuration:
+
+```typescript
+const urlRewritePlugin = definePlugin({
+  id: 'url-rewrite',
+  name: 'URL Rewrite Plugin',
+  
+  setup: (ctx) => {
+    // Rewrite URLs based on environment
+    if (process.env.USE_MOCK_API) {
+      return {
+        initURL: ctx.initURL.replace(
+          'api.example.com',
+          'mock-api.example.com'
+        ),
+      };
+    }
+  },
+});
+```
+
+## Plugin Examples
+
+### Logger Plugin
+
+Log all requests and responses:
+
+```typescript
+import { definePlugin } from 'callapi';
+
+interface LoggerOptions {
+  enabled?: boolean;
+  logLevel?: 'debug' | 'info' | 'error';
+}
+
+export const loggerPlugin = definePlugin<LoggerOptions>({
+  id: 'logger',
+  name: 'Logger Plugin',
+  version: '1.0.0',
+  description: 'Logs all API requests and responses',
+  
+  defineExtraOptions: () => ({
+    logger: {
+      enabled: true,
+      logLevel: 'info',
+    },
+  }),
+  
+  hooks: (ctx) => {
+    const { enabled, logLevel } = ctx.options.logger || {};
+    
+    if (!enabled) return {};
+    
+    return {
+      onRequest: ({ options, request }) => {
+        console.log(`[${logLevel}] →`, request.method, options.fullURL);
+      },
+      
+      onSuccess: ({ data, response, options }) => {
+        console.log(`[${logLevel}] ←`, response.status, options.fullURL);
+        if (logLevel === 'debug') {
+          console.log('Data:', data);
+        }
+      },
+      
+      onError: ({ error, options }) => {
+        console.error(`[${logLevel}] ✗`, error.message, options.fullURL);
+      },
+    };
+  },
+});
+
+// Usage
+const callApi = createFetchClient({
+  baseURL: 'https://api.example.com',
+  plugins: [loggerPlugin],
+  logger: {
+    enabled: true,
+    logLevel: 'debug',
+  },
+});
+```
+
+### Authentication Plugin
+
+Automatically add and refresh authentication tokens:
+
+```typescript
+import { definePlugin } from 'callapi';
+
+interface AuthPluginOptions {
+  getToken: () => Promise<string>;
+  refreshToken?: () => Promise<string>;
+  tokenHeader?: string;
+}
+
+export const authPlugin = definePlugin<AuthPluginOptions>({
+  id: 'auth',
+  name: 'Authentication Plugin',
+  version: '1.0.0',
+  
+  defineExtraOptions: () => ({
+    auth: {
+      getToken: async () => '',
+      tokenHeader: 'Authorization',
+    },
+  }),
+  
+  hooks: {
+    onRequest: async ({ request, options }) => {
+      const { getToken, tokenHeader } = options.auth;
+      const token = await getToken();
+      
+      if (token) {
+        request.headers[tokenHeader] = `Bearer ${token}`;
+      }
+    },
+    
+    onResponseError: async ({ error, options, request }) => {
+      // Refresh token on 401
+      if (error.response?.status === 401 && options.auth.refreshToken) {
+        const newToken = await options.auth.refreshToken();
+        request.headers[options.auth.tokenHeader] = `Bearer ${newToken}`;
+        
+        // Retry with new token
+        return { shouldRetry: true };
+      }
+    },
+  },
+});
+
+// Usage
+const callApi = createFetchClient({
+  baseURL: 'https://api.example.com',
+  plugins: [authPlugin],
+  auth: {
+    getToken: async () => localStorage.getItem('token'),
+    refreshToken: async () => {
+      const newToken = await refreshAuthToken();
+      localStorage.setItem('token', newToken);
+      return newToken;
+    },
+  },
+});
+```
+
+### Cache Plugin
+
+Cache responses with TTL:
+
+```typescript
+import { definePlugin } from 'callapi';
+
+interface CacheOptions {
+  ttl?: number;
+  maxSize?: number;
+  include?: RegExp[];
+  exclude?: RegExp[];
+}
+
+export const cachePlugin = definePlugin<CacheOptions>({
+  id: 'cache',
+  name: 'Cache Plugin',
+  version: '1.0.0',
+  description: 'Caches GET requests',
+  
+  defineExtraOptions: () => ({
+    cache: {
+      ttl: 60000,
+      maxSize: 100,
+      include: [],
+      exclude: [],
+    },
+  }),
+  
+  setup: () => {
+    const cache = new Map();
+    let cacheSize = 0;
+    
+    return {
+      options: {
+        cache: {
+          _internal: { cache, cacheSize },
+        },
+      },
+    };
+  },
+  
+  middlewares: (ctx) => {
+    const { ttl, maxSize, include, exclude } = ctx.options.cache;
+    const { cache } = ctx.options.cache._internal;
+    
+    return {
+      fetchMiddleware: (mwCtx) => async (input, init) => {
+        const url = input.toString();
+        const method = init?.method || 'GET';
+        
+        // Only cache GET requests
+        if (method !== 'GET') {
+          return mwCtx.fetchImpl(input, init);
+        }
+        
+        // Check include/exclude patterns
+        if (include.length && !include.some(re => re.test(url))) {
+          return mwCtx.fetchImpl(input, init);
+        }
+        if (exclude.some(re => re.test(url))) {
+          return mwCtx.fetchImpl(input, init);
+        }
+        
+        // Check cache
+        const cached = cache.get(url);
+        if (cached && Date.now() - cached.time < ttl) {
+          console.log('Cache hit:', url);
+          return cached.response.clone();
+        }
+        
+        // Fetch and cache
+        const response = await mwCtx.fetchImpl(input, init);
+        
+        if (response.ok) {
+          // Limit cache size
+          if (cache.size >= maxSize) {
+            const firstKey = cache.keys().next().value;
+            cache.delete(firstKey);
+          }
+          
+          cache.set(url, {
+            response: response.clone(),
+            time: Date.now(),
+          });
+        }
+        
+        return response;
+      },
+    };
+  },
+});
+
+// Usage
+const callApi = createFetchClient({
+  baseURL: 'https://api.example.com',
+  plugins: [cachePlugin],
+  cache: {
+    ttl: 120000, // 2 minutes
+    maxSize: 50,
+    include: [/\/api\/static\//],
+    exclude: [/\/api\/dynamic\//],
+  },
+});
+```
+
+### Metrics Plugin
+
+Track API performance metrics:
+
+```typescript
+import { definePlugin } from 'callapi';
+
+interface Metrics {
+  totalRequests: number;
+  successfulRequests: number;
+  failedRequests: number;
+  averageResponseTime: number;
+}
+
+interface MetricsOptions {
+  enabled?: boolean;
+  onMetricsUpdate?: (metrics: Metrics) => void;
+}
+
+export const metricsPlugin = definePlugin<MetricsOptions>({
+  id: 'metrics',
+  name: 'Metrics Plugin',
+  version: '1.0.0',
+  
+  defineExtraOptions: () => ({
+    metrics: {
+      enabled: true,
+      _internal: {
+        data: {
+          totalRequests: 0,
+          successfulRequests: 0,
+          failedRequests: 0,
+          averageResponseTime: 0,
+          _totalTime: 0,
+        },
+      },
+    },
+  }),
+  
+  hooks: (ctx) => {
+    if (!ctx.options.metrics?.enabled) return {};
+    
+    return {
+      onRequest: ({ options }) => {
+        options.meta = {
+          ...options.meta,
+          _startTime: Date.now(),
+        };
+        
+        const metrics = options.metrics._internal.data;
+        metrics.totalRequests++;
+      },
+      
+      onSuccess: ({ options }) => {
+        const duration = Date.now() - options.meta._startTime;
+        const metrics = options.metrics._internal.data;
+        
+        metrics.successfulRequests++;
+        metrics._totalTime += duration;
+        metrics.averageResponseTime = 
+          metrics._totalTime / metrics.totalRequests;
+        
+        options.metrics.onMetricsUpdate?.(metrics);
+      },
+      
+      onError: ({ options }) => {
+        const duration = Date.now() - options.meta._startTime;
+        const metrics = options.metrics._internal.data;
+        
+        metrics.failedRequests++;
+        metrics._totalTime += duration;
+        metrics.averageResponseTime = 
+          metrics._totalTime / metrics.totalRequests;
+        
+        options.metrics.onMetricsUpdate?.(metrics);
+      },
+    };
+  },
+});
+
+// Usage
+const callApi = createFetchClient({
+  baseURL: 'https://api.example.com',
+  plugins: [metricsPlugin],
+  metrics: {
+    enabled: true,
+    onMetricsUpdate: (metrics) => {
+      console.log('API Metrics:', metrics);
+      updateDashboard(metrics);
+    },
+  },
+});
+```
+
+## Using Plugins
+
+### Base Plugins
+
+Add plugins to all requests:
+
+```typescript
+const callApi = createFetchClient({
+  baseURL: 'https://api.example.com',
+  plugins: [
+    loggerPlugin,
+    authPlugin,
+    metricsPlugin,
+  ],
+});
+```
+
+### Instance Plugins
+
+Add plugins to specific instances:
+
+```typescript
+const callApi = createFetchClient({
+  baseURL: 'https://api.example.com',
+  plugins: [loggerPlugin],
+});
+
+// Add cache plugin for this call only
+await callApi('/static-data', {
+  plugins: [cachePlugin],
+});
+```
+
+### Dynamic Plugins
+
+Compute plugins at runtime:
+
+```typescript
+const callApi = createFetchClient({
+  baseURL: 'https://api.example.com',
+  plugins: [loggerPlugin],
+});
+
+await callApi('/protected/data', {
+  plugins: ({ basePlugins }) => {
+    // Add auth plugin only for protected routes
+    return [...basePlugins, authPlugin];
+  },
+});
+```
+
+Source: [plugins.ts:127-136](~/workspace/source/packages/callapi/src/plugins.ts)
+
+## Plugin Execution Order
+
+Plugins execute in registration order:
+
+1. **Setup**: All plugin setup functions run sequentially
+2. **Hooks**: Plugin hooks → Base hooks → Instance hooks
+3. **Middleware**: Plugin middleware (innermost) → Base → Instance (outermost)
+
+```typescript
+const callApi = createFetchClient({
+  plugins: [pluginA, pluginB],  // 1. Plugin hooks
+  onRequest: baseHook,           // 2. Base hooks
+});
+
+await callApi('/users', {
+  onRequest: instanceHook,       // 3. Instance hooks
+});
+```
+
+Source: [plugins.ts:195-223](~/workspace/source/packages/callapi/src/plugins.ts)
+
+## Schema Plugins
+
+Plugins can provide validation schemas:
+
+```typescript
+import { z } from 'zod';
+import { definePlugin } from 'callapi';
+
+const standardErrorSchema = z.object({
+  message: z.string(),
+  code: z.string(),
+  details: z.record(z.unknown()).optional(),
+});
+
+export const schemaPlugin = definePlugin({
+  id: 'standard-errors',
+  name: 'Standard Error Schema',
+  
+  schema: {
+    config: {
+      baseURL: '/api/v1',
+    },
+    routes: {
+      ['*']: {
+        errorData: standardErrorSchema,
+      },
+    },
+  },
+});
+
+// Usage
+const callApi = createFetchClient({
+  baseURL: 'https://api.example.com',
+  plugins: [schemaPlugin],
+});
+```
+
+Source: [plugins.ts:100-102](~/workspace/source/packages/callapi/src/plugins.ts)
+
+## TypeScript Support
+
+### Typed Extra Options
+
+Plugins can define typed configuration:
+
+```typescript
+import type { InferPluginExtraOptions } from 'callapi';
+
+const plugins = [loggerPlugin, authPlugin, cachePlugin] as const;
+
+type PluginOptions = InferPluginExtraOptions<typeof plugins>;
+
+const callApi = createFetchClient<{
+  InferredExtraOptions: PluginOptions;
+}>({
+  baseURL: 'https://api.example.com',
+  plugins,
+  
+  // TypeScript knows about plugin options
+  logger: { enabled: true },
+  auth: { getToken: async () => '...' },
+  cache: { ttl: 60000 },
+});
+```
+
+Source: [plugins.ts:117-125](~/workspace/source/packages/callapi/src/plugins.ts)
+
+### Type-Safe Plugin Creation
+
+Define plugin types explicitly:
+
+```typescript
+import type { CallApiPlugin } from 'callapi';
+
+interface MyPluginOptions {
+  apiKey: string;
+  timeout: number;
+}
+
+const myPlugin: CallApiPlugin = {
+  id: 'my-plugin',
+  name: 'My Plugin',
+  
+  defineExtraOptions: (): MyPluginOptions => ({
+    apiKey: '',
+    timeout: 5000,
+  }),
+  
+  hooks: {
+    onRequest: ({ request, options }) => {
+      // TypeScript knows options.apiKey exists
+      request.headers['X-API-Key'] = options.apiKey;
+    },
+  },
+};
+```
+
+## Best Practices
+
+<AccordionGroup>
+
+<Accordion title="Single Responsibility">
+
+Each plugin should have one clear purpose:
+
+```typescript
+// ❌ Bad: Plugin does too much
+const superPlugin = definePlugin({
+  id: 'super',
+  hooks: {
+    onRequest: () => { /* auth + logging + caching */ },
+  },
+});
+
+// ✅ Good: Focused plugins
+const plugins = [authPlugin, loggerPlugin, cachePlugin];
+```
+
+</Accordion>
+
+<Accordion title="Unique Plugin IDs">
+
+Use descriptive, unique identifiers:
+
+```typescript
+// ❌ Bad: Generic ID
+const plugin = definePlugin({
+  id: 'plugin',  // Too generic
+});
+
+// ✅ Good: Specific ID
+const plugin = definePlugin({
+  id: 'acme-auth-v2',  // Namespaced and versioned
+});
+```
+
+</Accordion>
+
+<Accordion title="Provide Configuration">
+
+Make plugins configurable:
+
+```typescript
+// ❌ Bad: Hardcoded values
+const plugin = definePlugin({
+  hooks: {
+    onRequest: ({ request }) => {
+      request.headers['X-Key'] = 'hardcoded';
+    },
+  },
+});
+
+// ✅ Good: Configurable
+const plugin = definePlugin({
+  defineExtraOptions: () => ({
+    apiKey: '',
+  }),
+  hooks: {
+    onRequest: ({ request, options }) => {
+      request.headers['X-Key'] = options.apiKey;
+    },
+  },
+});
+```
+
+</Accordion>
+
+<Accordion title="Document Plugin Options">
+
+Provide clear documentation:
+
+```typescript
+/**
+ * Authentication plugin for CallApi
+ * 
+ * @example
+ * ```ts
+ * const callApi = createFetchClient({
+ *   plugins: [authPlugin],
+ *   auth: {
+ *     getToken: () => localStorage.getItem('token'),
+ *   },
+ * });
+ * ```
+ */
+export const authPlugin = definePlugin({
+  id: 'auth',
+  name: 'Authentication Plugin',
+  description: 'Adds Bearer token to all requests',
+  version: '1.0.0',
+  
+  defineExtraOptions: () => ({
+    /** Function to retrieve the current auth token */
+    getToken: async () => '',
+    /** Header name for the token (default: Authorization) */
+    tokenHeader: 'Authorization',
+  }),
+  // ...
+});
+```
+
+</Accordion>
+
+<Accordion title="Handle Errors Gracefully">
+
+Don't let plugin errors break requests:
+
+```typescript
+const plugin = definePlugin({
+  hooks: {
+    onRequest: async ({ request, options }) => {
+      try {
+        const token = await options.getToken();
+        request.headers.Authorization = `Bearer ${token}`;
+      } catch (error) {
+        console.error('Failed to get token:', error);
+        // Continue without auth rather than failing
+      }
+    },
+  },
+});
+```
+
+</Accordion>
+
+</AccordionGroup>
+
+## Publishing Plugins
+
+To share your plugin with others:
+
+1. **Package structure**:
+   ```
+   my-callapi-plugin/
+   ├── src/
+   │   └── index.ts
+   ├── package.json
+   ├── README.md
+   └── tsconfig.json
+   ```
+
+2. **Export plugin**:
+   ```typescript
+   // src/index.ts
+   export { myPlugin } from './plugin';
+   export type { MyPluginOptions } from './types';
+   ```
+
+3. **Package.json**:
+   ```json
+   {
+     "name": "callapi-plugin-myplugin",
+     "version": "1.0.0",
+     "main": "dist/index.js",
+     "types": "dist/index.d.ts",
+     "peerDependencies": {
+       "callapi": "^1.0.0"
+     }
+   }
+   ```
+
+4. **Documentation**: Include usage examples and API reference in README.md
+
+<Tip>
+Prefix plugin packages with `callapi-plugin-` for easy discovery.
+</Tip>

@@ -1,0 +1,423 @@
+---
+title: Body Helpers
+description: Utilities for converting data to FormData and URLSearchParams
+---
+
+CallApi provides helper functions to convert plain JavaScript objects into `FormData` or `URLSearchParams`. These utilities handle validation, type conversion, and proper formatting of complex data types.
+
+## toFormData
+
+Converts a plain object to `FormData`, with optional schema validation.
+
+### Import
+
+```ts
+import { toFormData } from "@zayne-labs/callapi/utils";
+```
+
+### Signature
+
+```ts
+function toFormData<TSchema extends CallApiSchemaType>(
+  data: InferSchemaOutput<TSchema>,
+  schema?: TSchema
+): FormData
+```
+
+### Parameters
+
+<Properties>
+  <Property name="data" type="object" required>
+    The data object to convert to FormData
+  </Property>
+  <Property name="schema" type="Schema">
+    Optional validation schema (e.g., Zod schema) to validate data before conversion
+  </Property>
+</Properties>
+
+### Returns
+
+Returns a `FormData` object with all entries from the input data.
+
+### Behavior
+
+- **Primitives** (string, number, boolean): Converted to strings
+- **Blobs/Files**: Added directly to FormData
+- **Arrays**: Each item is appended (allows multiple values for same key)
+- **Objects**: JSON stringified before adding to FormData
+- **Null/Undefined**: Skipped
+
+### Usage
+
+#### Basic Usage
+
+```ts
+import { toFormData } from "@zayne-labs/callapi/utils";
+
+const formData = toFormData({
+  name: "John Doe",
+  age: 30,
+  active: true,
+});
+
+// FormData contains:
+// name: "John Doe"
+// age: "30"
+// active: "true"
+```
+
+#### With File Uploads
+
+```ts
+import { toFormData } from "@zayne-labs/callapi/utils";
+
+const fileInput = document.querySelector('input[type="file"]');
+const file = fileInput.files[0];
+
+const formData = toFormData({
+  avatar: file,
+  username: "johndoe",
+});
+
+// Send as multipart/form-data
+await api("/users/upload", {
+  method: "POST",
+  body: formData,
+});
+```
+
+#### With Arrays
+
+```ts
+import { toFormData } from "@zayne-labs/callapi/utils";
+
+const formData = toFormData({
+  tags: ["javascript", "typescript", "nodejs"],
+  name: "My Project",
+});
+
+// FormData contains:
+// tags: "javascript"
+// tags: "typescript" 
+// tags: "nodejs"
+// name: "My Project"
+```
+
+#### With Nested Objects
+
+```ts
+import { toFormData } from "@zayne-labs/callapi/utils";
+
+const formData = toFormData({
+  user: {
+    name: "John",
+    age: 30,
+  },
+  settings: {
+    theme: "dark",
+    notifications: true,
+  },
+});
+
+// FormData contains:
+// user: "{\"name\":\"John\",\"age\":30}"
+// settings: "{\"theme\":\"dark\",\"notifications\":true}"
+```
+
+#### With Validation
+
+```ts
+import { toFormData } from "@zayne-labs/callapi/utils";
+import { z } from "zod";
+
+const userSchema = z.object({
+  name: z.string().min(2),
+  email: z.string().email(),
+  age: z.number().positive(),
+});
+
+try {
+  const formData = toFormData(
+    {
+      name: "John",
+      email: "john@example.com",
+      age: 30,
+    },
+    userSchema
+  );
+  
+  // FormData is validated and ready to use
+} catch (error) {
+  if (error instanceof ValidationError) {
+    console.error("Validation failed:", error.errorData);
+  }
+}
+```
+
+## toSearchParams
+
+Converts a plain object to `URLSearchParams`, with optional schema validation.
+
+### Import
+
+```ts
+import { toSearchParams } from "@zayne-labs/callapi/utils";
+```
+
+### Signature
+
+```ts
+function toSearchParams<TSchema extends CallApiSchemaType>(
+  data: InferSchemaOutput<TSchema>,
+  schema?: TSchema
+): URLSearchParams
+```
+
+### Parameters
+
+<Properties>
+  <Property name="data" type="object" required>
+    The data object to convert to URLSearchParams
+  </Property>
+  <Property name="schema" type="Schema">
+    Optional validation schema to validate data before conversion
+  </Property>
+</Properties>
+
+### Returns
+
+Returns a `URLSearchParams` object with all entries from the input data.
+
+### Behavior
+
+- **Primitives**: Converted to strings
+- **Arrays**: Each item is appended as a separate parameter
+- **Objects**: JSON stringified
+- **Null/Undefined**: Skipped
+
+### Usage
+
+#### Basic Usage
+
+```ts
+import { toSearchParams } from "@zayne-labs/callapi/utils";
+
+const params = toSearchParams({
+  page: 1,
+  limit: 10,
+  sort: "name",
+});
+
+console.log(params.toString());
+// "page=1&limit=10&sort=name"
+```
+
+#### With Arrays
+
+```ts
+import { toSearchParams } from "@zayne-labs/callapi/utils";
+
+const params = toSearchParams({
+  tags: ["javascript", "typescript"],
+  category: "programming",
+});
+
+console.log(params.toString());
+// "tags=javascript&tags=typescript&category=programming"
+```
+
+#### In API Calls
+
+```ts
+import { toSearchParams } from "@zayne-labs/callapi/utils";
+
+const searchParams = toSearchParams({
+  q: "react",
+  page: 1,
+  per_page: 20,
+});
+
+const { data } = await api("/search", {
+  searchParams,
+});
+
+// Or use directly in URL
+const { data: results } = await api(`/search?${searchParams.toString()}`);
+```
+
+#### With Validation
+
+```ts
+import { toSearchParams } from "@zayne-labs/callapi/utils";
+import { z } from "zod";
+
+const searchSchema = z.object({
+  q: z.string().min(1),
+  page: z.number().int().positive(),
+  per_page: z.number().int().min(1).max(100),
+});
+
+try {
+  const params = toSearchParams(
+    {
+      q: "typescript",
+      page: 1,
+      per_page: 50,
+    },
+    searchSchema
+  );
+  
+  // Params are validated and ready to use
+} catch (error) {
+  if (error instanceof ValidationError) {
+    console.error("Invalid search parameters:", error.errorData);
+  }
+}
+```
+
+## toQueryString
+
+Converts a plain object directly to a query string.
+
+### Import
+
+```ts
+import { toQueryString } from "@zayne-labs/callapi/utils";
+```
+
+### Signature
+
+```ts
+function toQueryString<TSchema extends CallApiSchemaType>(
+  data: InferSchemaOutput<TSchema>,
+  schema?: TSchema
+): string
+```
+
+### Usage
+
+```ts
+import { toQueryString } from "@zayne-labs/callapi/utils";
+
+const queryString = toQueryString({
+  page: 1,
+  limit: 10,
+  tags: ["javascript", "typescript"],
+});
+
+console.log(queryString);
+// "page=1&limit=10&tags=javascript&tags=typescript"
+
+// Use directly in URL
+const { data } = await api(`/search?${queryString}`);
+```
+
+## Validation Errors
+
+All helper functions throw a `ValidationError` if the schema validation fails:
+
+```ts
+import { toFormData, ValidationError } from "@zayne-labs/callapi/utils";
+import { z } from "zod";
+
+const schema = z.object({
+  email: z.string().email(),
+  age: z.number().positive(),
+});
+
+try {
+  const formData = toFormData(
+    {
+      email: "invalid-email",
+      age: -5,
+    },
+    schema
+  );
+} catch (error) {
+  if (error instanceof ValidationError) {
+    console.log(error.name); // "ValidationError"
+    console.log(error.issueCause); // "toFormData"
+    console.log(error.errorData); // Array of validation issues
+  }
+}
+```
+
+## Common Patterns
+
+### File Upload with Metadata
+
+```ts
+import { toFormData } from "@zayne-labs/callapi/utils";
+
+const uploadFile = async (file: File, metadata: Record<string, unknown>) => {
+  const formData = toFormData({
+    file,
+    ...metadata,
+  });
+
+  return api("/upload", {
+    method: "POST",
+    body: formData,
+  });
+};
+
+await uploadFile(myFile, {
+  description: "Profile picture",
+  tags: ["profile", "avatar"],
+});
+```
+
+### Search with Filters
+
+```ts
+import { toSearchParams } from "@zayne-labs/callapi/utils";
+
+const searchProducts = async (filters: {
+  q?: string;
+  category?: string;
+  minPrice?: number;
+  maxPrice?: number;
+  tags?: string[];
+}) => {
+  const params = toSearchParams(filters);
+  
+  return api("/products", {
+    searchParams: params,
+  });
+};
+
+const { data } = await searchProducts({
+  category: "electronics",
+  minPrice: 100,
+  maxPrice: 500,
+  tags: ["laptop", "computer"],
+});
+```
+
+### Validated Form Submission
+
+```ts
+import { toFormData } from "@zayne-labs/callapi/utils";
+import { z } from "zod";
+
+const userFormSchema = z.object({
+  name: z.string().min(2),
+  email: z.string().email(),
+  avatar: z.instanceof(File).optional(),
+});
+
+const submitUserForm = async (formData: z.infer<typeof userFormSchema>) => {
+  const validated = toFormData(formData, userFormSchema);
+  
+  return api("/users", {
+    method: "POST",
+    body: validated,
+  });
+};
+```
+
+## See Also
+
+- [Request Options](/api/config/request-options) - Understanding request configuration
+- [Validation](/guides/validation) - Schema validation guide
+- [Error Handling](/guides/error-handling) - Working with ValidationError

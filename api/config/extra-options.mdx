@@ -1,0 +1,500 @@
+---
+title: CallApiExtraOptions
+description: Additional configuration options for CallApi requests
+---
+
+## Overview
+
+The `CallApiExtraOptions` interface provides advanced configuration options for customizing request behavior, including authentication, retries, hooks, middlewares, plugins, and validation.
+
+## Type Definition
+
+```typescript
+type CallApiExtraOptions<
+  TCallApiContext extends CallApiContext = DefaultCallApiContext,
+  TData = DefaultDataType,
+  TErrorData = DefaultDataType,
+  TResultMode extends ResultModeType = ResultModeType,
+  TThrowOnError extends ThrowOnErrorBoolean = DefaultThrowOnError,
+  TResponseType extends ResponseTypeType = ResponseTypeType,
+  TBasePluginArray extends CallApiPlugin[] = DefaultPluginArray,
+  TPluginArray extends CallApiPlugin[] = DefaultPluginArray,
+  TBaseSchemaRoutes extends BaseCallApiSchemaRoutes = BaseCallApiSchemaRoutes,
+  TSchema extends CallApiSchema = CallApiSchema,
+  TBaseSchemaConfig extends CallApiSchemaConfig = CallApiSchemaConfig,
+  TSchemaConfig extends CallApiSchemaConfig = CallApiSchemaConfig,
+  TCurrentRouteSchemaKey extends string = string,
+> = SharedExtraOptions & {
+  plugins?: TPluginArray | ((context: InferExtendPluginContext<TBasePluginArray>) => TPluginArray);
+  schema?: TSchema | ((context: InferExtendSchemaContext<TBaseSchemaRoutes, TCurrentRouteSchemaKey>) => TSchema);
+  schemaConfig?: TSchemaConfig | ((context: GetExtendSchemaConfigContext<TBaseSchemaConfig>) => TSchemaConfig);
+}
+```
+
+## Core Options
+
+### Authentication
+
+<ParamField path="auth" type="string | AuthOption">
+  Automatically add an Authorization header value. Supports multiple authentication patterns.
+
+  ```typescript
+  // Direct authorization header value
+  auth: 'Bearer your-token'
+
+  // Auth object for structured configuration
+  auth: {
+    type: 'bearer',
+    token: 'your-token'
+  }
+  ```
+</ParamField>
+
+### Body Serialization
+
+<ParamField path="bodySerializer" type="(bodyData: Record<string, unknown>) => string">
+  Custom function to serialize request body objects into strings.
+
+  ```typescript
+  // XML serialization
+  bodySerializer: (data) => {
+    return `<request>${Object.entries(data)
+      .map(([key, value]) => `<${key}>${value}</${key}>`)
+      .join('')}</request>`;
+  }
+
+  // Custom JSON with formatting
+  bodySerializer: (data) => JSON.stringify(data, null, 2)
+  ```
+</ParamField>
+
+### Response Handling
+
+<ParamField path="responseType" type="'json' | 'text' | 'blob' | 'arrayBuffer' | 'stream'" default="json">
+  Expected response type, determines how the response body is parsed.
+
+  - **json**: Parses as JSON using response.json()
+  - **text**: Returns as plain text using response.text()
+  - **blob**: Returns as Blob using response.blob()
+  - **arrayBuffer**: Returns as ArrayBuffer using response.arrayBuffer()
+  - **stream**: Returns the response body stream directly
+
+  ```typescript
+  // File download
+  const file = await callApi('/download/file.pdf', {
+    responseType: 'blob'
+  });
+
+  // Streaming responses
+  const stream = await callApi('/large-dataset', {
+    responseType: 'stream'
+  });
+  ```
+</ParamField>
+
+<ParamField path="responseParser" type="(text: string) => TData | Promise<TData>">
+  Custom function to parse response strings into actual values.
+
+  ```typescript
+  // Parse XML responses
+  responseParser: (text) => {
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(text, 'text/xml');
+    return xmlToObject(doc);
+  }
+
+  // Parse CSV responses
+  responseParser: (text) => {
+    const lines = text.split('\n');
+    const headers = lines[0].split(',');
+    return lines.slice(1).map(line => {
+      const values = line.split(',');
+      return headers.reduce((obj, header, index) => {
+        obj[header] = values[index];
+        return obj;
+      }, {});
+    });
+  }
+  ```
+</ParamField>
+
+<ParamField path="cloneResponse" type="boolean" default={false}>
+  Whether to clone the response so it can be read multiple times. Enable this when you need to read the response in multiple places (e.g., in hooks and main code).
+
+  ```typescript
+  const api = createFetchClient({
+    baseURL: 'https://api.example.com',
+    cloneResponse: true,
+    onResponse: async ({ response }) => {
+      // Can read response here
+      const data = await response.json();
+      console.log('Logged response:', data);
+    }
+  });
+  ```
+</ParamField>
+
+### Result Mode
+
+<ParamField path="resultMode" type="'all' | 'onlyData' | 'onlyResponse' | 'fetchApi' | 'withoutResponse'" default="all">
+  Dictates how CallApi processes and returns the final result.
+
+  - **all** (default): Returns `{ data, error, response }`. Standard lifecycle.
+  - **onlyData**: Returns only the data from the response.
+  - **onlyResponse**: Returns only the `Response` object.
+  - **fetchApi**: Returns only the `Response` object, skips parsing and validation.
+  - **withoutResponse**: Returns `{ data, error }`. Standard lifecycle, but omits the `response` property.
+
+  ```typescript
+  // Get only data
+  const data = await callApi('/users', { resultMode: 'onlyData' });
+
+  // Get full result with error handling
+  const { data, error, response } = await callApi('/users', {
+    resultMode: 'all'
+  });
+  if (error) {
+    console.error('Request failed:', error);
+  }
+
+  // Fetch API compatibility mode
+  const response = await callApi('/users', { resultMode: 'fetchApi' });
+  ```
+</ParamField>
+
+### Error Handling
+
+<ParamField path="throwOnError" type="boolean | ((error) => boolean)" default={false}>
+  Controls whether errors are thrown as exceptions or returned in the result.
+
+  ```typescript
+  // Always throw errors
+  throwOnError: true
+  try {
+    const data = await callApi('/users');
+  } catch (error) {
+    console.error('Request failed:', error);
+  }
+
+  // Conditionally throw based on error type
+  throwOnError: (error) => {
+    // Throw on client errors (4xx) but not server errors (5xx)
+    return error.response?.status >= 400 && error.response?.status < 500;
+  }
+
+  // Throw only on specific status codes
+  throwOnError: (error) => {
+    const criticalErrors = [401, 403, 404];
+    return criticalErrors.includes(error.response?.status);
+  }
+  ```
+</ParamField>
+
+<ParamField path="defaultHTTPErrorMessage" type="string | ((context) => string)" default="Failed to fetch data from server!">
+  Default HTTP error message when server doesn't provide one.
+
+  ```typescript
+  // Static error message
+  defaultHTTPErrorMessage: 'API request failed. Please try again.'
+
+  // Dynamic error message based on status code
+  defaultHTTPErrorMessage: ({ response }) => {
+    switch (response.status) {
+      case 401: return 'Authentication required. Please log in.';
+      case 403: return 'Access denied. Insufficient permissions.';
+      case 404: return 'Resource not found.';
+      case 429: return 'Too many requests. Please wait and try again.';
+      case 500: return 'Server error. Please contact support.';
+      default: return `Request failed with status ${response.status}`;
+    }
+  }
+  ```
+</ParamField>
+
+### Timeout
+
+<ParamField path="timeout" type="number">
+  Request timeout in milliseconds. Request will be aborted if it takes longer.
+
+  ```typescript
+  // 5 second timeout
+  timeout: 5000
+
+  // Different timeouts for different endpoints
+  const quickApi = createFetchClient({ timeout: 3000 });
+  const slowApi = createFetchClient({ timeout: 30000 });
+
+  // Per-request timeout override
+  await callApi('/quick-data', { timeout: 1000 });
+  await callApi('/slow-report', { timeout: 60000 });
+  ```
+</ParamField>
+
+### Metadata
+
+<ParamField path="meta" type="object">
+  Optional metadata field for associating additional information with requests. Useful for logging, tracing, or handling specific cases in shared interceptors.
+
+  ```typescript
+  // Request tracking
+  const result = await callApi('/data', {
+    meta: {
+      requestId: generateId(),
+      source: 'user-dashboard',
+      priority: 'high'
+    }
+  });
+
+  // Feature flags
+  const client = createFetchClient({
+    baseURL: 'https://api.example.com',
+    meta: {
+      features: ['newUI', 'betaFeature'],
+      experiment: 'variantA'
+    }
+  });
+
+  // Access in hooks
+  const api = createFetchClient({
+    baseURL: 'https://api.example.com',
+    onResponseError: ({ response, options }) => {
+      if (options.meta?.userId) {
+        console.error(`User ${options.meta.userId} made an error`);
+      }
+    }
+  });
+  ```
+</ParamField>
+
+## Advanced Options
+
+### Custom Fetch Implementation
+
+<ParamField path="customFetchImpl" type="FetchImpl">
+  Custom fetch implementation to replace the default fetch function.
+
+  ```typescript
+  // Mock fetch for testing
+  customFetchImpl: async (url, init) => {
+    return new Response(JSON.stringify({ mocked: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' }
+    });
+  }
+
+  // Add custom logging to all requests
+  customFetchImpl: async (url, init) => {
+    console.log(`Fetching: ${url}`);
+    const response = await fetch(url, init);
+    console.log(`Response: ${response.status}`);
+    return response;
+  }
+  ```
+</ParamField>
+
+<ParamField path="forcefullyCalculateRequestStreamSize" type="boolean" default={false}>
+  Forces calculation of total byte size from request body streams. Useful when the Content-Length header is missing or incorrect.
+</ParamField>
+
+## Hooks and Middlewares
+
+<ParamField path="hooks" type="Hooks | Hooks[]">
+  Lifecycle hooks for intercepting request/response flow. See [Hooks](/api/types/hooks) for details.
+
+  ```typescript
+  const api = createFetchClient({
+    baseURL: 'https://api.example.com',
+    onRequest: ({ request }) => {
+      console.log('Sending request:', request);
+    },
+    onSuccess: ({ data }) => {
+      console.log('Request succeeded:', data);
+    },
+    onError: ({ error }) => {
+      console.error('Request failed:', error);
+    }
+  });
+  ```
+</ParamField>
+
+<ParamField path="hooksExecutionMode" type="'parallel' | 'sequential'" default="parallel">
+  Controls the execution mode of all composed hooks.
+
+  - **parallel**: All hooks execute simultaneously via Promise.all()
+  - **sequential**: All hooks execute one by one in registration order
+
+  ```typescript
+  const api = createFetchClient({
+    baseURL: 'https://api.example.com',
+    hooksExecutionMode: 'sequential',
+    onRequest: [
+      async ({ request }) => {
+        // This runs first
+        console.log('Hook 1');
+      },
+      async ({ request }) => {
+        // This runs second
+        console.log('Hook 2');
+      }
+    ]
+  });
+  ```
+</ParamField>
+
+<ParamField path="fetchMiddleware" type="(context: FetchMiddlewareContext) => FetchImpl">
+  Middleware to wrap the fetch implementation. See [Middlewares](/api/types/middlewares) for details.
+</ParamField>
+
+## Plugins and Validation
+
+<ParamField path="plugins" type="CallApiPlugin[] | ((context) => CallApiPlugin[])">
+  Array of instance-specific CallApi plugins or a function to configure plugins. See [CallApiPlugin](/api/types/plugins) for details.
+
+  ```typescript
+  // Static plugins array
+  plugins: [loggerPlugin(), retryPlugin()]
+
+  // Dynamic plugins based on base plugins
+  plugins: ({ basePlugins }) => [
+    ...basePlugins.filter(p => p.name !== 'unwanted'),
+    customPlugin
+  ]
+  ```
+</ParamField>
+
+<ParamField path="schema" type="CallApiSchema | ((context) => CallApiSchema)">
+  Instance-specific validation schemas. Can be a static schema object or a function that receives base schema context.
+
+  ```typescript
+  import { z } from 'zod';
+
+  // Static schema
+  schema: {
+    request: z.object({
+      name: z.string(),
+      email: z.string().email()
+    }),
+    response: z.object({
+      id: z.string(),
+      success: z.boolean()
+    })
+  }
+
+  // Dynamic schema extending base
+  schema: ({ baseSchemaRoutes, currentRouteSchemaKey }) => ({
+    request: baseSchemaRoutes[currentRouteSchemaKey]?.request,
+    response: z.object({
+      data: z.array(z.any())
+    })
+  })
+  ```
+</ParamField>
+
+<ParamField path="schemaConfig" type="CallApiSchemaConfig | ((context) => CallApiSchemaConfig)">
+  Instance-specific schema configuration. Controls how validation schemas are applied and behave for this specific API instance.
+</ParamField>
+
+## URL Options
+
+<ParamField path="baseURL" type="string">
+  Base URL to prepend to all requests.
+
+  ```typescript
+  const api = createFetchClient({
+    baseURL: 'https://api.example.com'
+  });
+
+  // Requests automatically use baseURL
+  await api('/users'); // => https://api.example.com/users
+  ```
+</ParamField>
+
+<ParamField path="searchParams" type="Record<string, string | number | boolean>">
+  Query parameters to append to the URL.
+
+  ```typescript
+  await callApi('/users', {
+    searchParams: {
+      page: 1,
+      limit: 10,
+      active: true
+    }
+  });
+  // => /users?page=1&limit=10&active=true
+  ```
+</ParamField>
+
+## Retry Options
+
+<ParamField path="retry" type="number | RetryOptions">
+  Configure automatic request retry behavior.
+
+  ```typescript
+  // Simple retry count
+  retry: 3
+
+  // Advanced retry configuration
+  retry: {
+    maxRetries: 3,
+    delay: 1000,
+    backoff: 2,
+    retryOn: [408, 429, 500, 502, 503, 504]
+  }
+  ```
+</ParamField>
+
+## Deduplication Options
+
+<ParamField path="dedupe" type="boolean | DedupeOptions">
+  Configure request deduplication to prevent multiple identical requests.
+
+  ```typescript
+  // Enable deduplication
+  dedupe: true
+
+  // Advanced deduplication configuration
+  dedupe: {
+    enabled: true,
+    key: (url, options) => `${url}-${JSON.stringify(options.body)}`
+  }
+  ```
+</ParamField>
+
+## Examples
+
+### Complete Configuration Example
+
+```typescript
+const api = createFetchClient({
+  baseURL: 'https://api.example.com',
+  timeout: 10000,
+  throwOnError: true,
+  resultMode: 'all',
+  responseType: 'json',
+  auth: 'Bearer token',
+  retry: 3,
+  dedupe: true,
+  onRequest: ({ request }) => {
+    console.log('Request:', request);
+  },
+  onSuccess: ({ data }) => {
+    console.log('Success:', data);
+  },
+  onError: ({ error }) => {
+    console.error('Error:', error);
+  },
+  plugins: [loggerPlugin(), retryPlugin()],
+  meta: {
+    source: 'web-app',
+    version: '1.0.0'
+  }
+});
+```
+
+## See Also
+
+- [BaseCallApiConfig](/api/config/base-config) - Base configuration interface
+- [CallApiRequestOptions](/api/config/request-options) - Request-specific options
+- [Hooks](/api/types/hooks) - Lifecycle hooks
+- [CallApiPlugin](/api/types/plugins) - Plugin interface
+- [Middlewares](/api/types/middlewares) - Fetch middlewares

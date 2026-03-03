@@ -1,0 +1,498 @@
+---
+title: 'URL Helpers'
+description: 'Work with URL parameters, query strings, and method prefixes'
+---
+
+## Overview
+
+CallApi provides flexible URL construction with support for:
+- Path parameter substitution (`:param` and `{param}` syntax)
+- Query string generation
+- Method-prefixed routes (`@get/`, `@post/`, etc.)
+- Base URL handling
+
+## Base URL
+
+<ParamField path="baseURL" type="string">
+  Base URL prepended to all relative URLs. Absolute URLs (starting with `http://` or `https://`) ignore the base URL.
+</ParamField>
+
+```typescript url.ts
+interface URLOptions {
+  baseURL?: string;
+}
+```
+
+**Global base URL:**
+```typescript
+import { createFetchClient } from "@zayne-labs/callapi";
+
+const client = createFetchClient({
+  baseURL: "https://api.example.com/v1"
+});
+
+// Relative URLs use baseURL
+await client("/users");           // → https://api.example.com/v1/users
+await client("/posts/123");      // → https://api.example.com/v1/posts/123
+
+// Absolute URLs ignore baseURL
+await client("https://other-api.com/data"); // → https://other-api.com/data
+```
+
+**Environment-specific base URLs:**
+```typescript
+const client = createFetchClient({
+  baseURL: 
+    process.env.NODE_ENV === "production"
+      ? "https://api.example.com"
+      : "http://localhost:3000/api"
+});
+```
+
+## Path Parameters
+
+<ParamField path="params" type="Record<string, string | number> | Array<string | number>">
+  Values to substitute into URL path segments. Supports both object-style (named) and array-style (positional) parameters.
+</ParamField>
+
+```typescript url.ts
+export type RecordStyleParams = Record<string, AllowedQueryParamValues>;
+export type TupleStyleParams = AllowedQueryParamValues[];
+export type Params = RecordStyleParams | TupleStyleParams;
+
+type AllowedQueryParamValues = boolean | number | string;
+
+interface URLOptions {
+  params?: Params;
+}
+```
+
+### Object-Style Parameters (Recommended)
+
+Use named parameters with object syntax:
+
+```typescript
+// :param syntax
+const { data } = await callApi("/users/:userId/posts/:postId", {
+  params: { userId: "123", postId: "456" }
+});
+// → /users/123/posts/456
+
+// {param} syntax
+const { data } = await callApi("/users/{userId}/posts/{postId}", {
+  params: { userId: "123", postId: "456" }
+});
+// → /users/123/posts/456
+
+// Mixed syntax
+const { data } = await callApi("/orgs/:orgId/repos/{repoId}", {
+  params: { orgId: "zayne-labs", repoId: "callapi" }
+});
+// → /orgs/zayne-labs/repos/callapi
+```
+
+**Implementation:**
+```typescript url.ts
+const handleObjectParams = (
+  url: string,
+  params: Record<string, unknown>
+) => {
+  let newUrl = url;
+  
+  for (const [paramKey, paramValue] of Object.entries(params)) {
+    const colonPattern = `:${paramKey}`;
+    const bracePattern = `{${paramKey}}`;
+    const stringValue = String(paramValue);
+    
+    newUrl = newUrl.replace(colonPattern, stringValue);
+    newUrl = newUrl.replace(bracePattern, stringValue);
+  }
+  
+  return newUrl;
+};
+```
+
+### Array-Style Parameters
+
+Use positional parameters with array syntax:
+
+```typescript
+// Parameters are substituted in order
+const { data } = await callApi("/users/:userId/posts/:postId", {
+  params: ["123", "456"]
+});
+// → /users/123/posts/456
+
+// Works with {param} syntax too
+const { data } = await callApi("/users/{userId}/posts/{postId}", {
+  params: ["123", "456"]
+});
+// → /users/123/posts/456
+```
+
+**Implementation:**
+```typescript url.ts
+const handleArrayParams = (
+  url: string,
+  params: Array<unknown>
+) => {
+  let newUrl = url;
+  const urlParts = newUrl.split("/");
+  
+  // Find all parameters in order
+  const matchedParamsArray: string[] = [];
+  
+  for (const part of urlParts) {
+    const isMatch = 
+      part.startsWith(":") || 
+      (part.startsWith("{") && part.endsWith("}"));
+    
+    if (isMatch) {
+      matchedParamsArray.push(part);
+    }
+  }
+  
+  // Replace in order
+  for (const [paramIndex, matchedParam] of matchedParamsArray.entries()) {
+    const stringParamValue = String(params[paramIndex]);
+    newUrl = newUrl.replace(matchedParam, stringParamValue);
+  }
+  
+  return newUrl;
+};
+```
+
+### Type Coercion
+
+All parameter values are automatically converted to strings:
+
+```typescript
+const { data } = await callApi("/users/:id/posts/:postId", {
+  params: {
+    id: 123,        // number → "123"
+    postId: true    // boolean → "true"
+  }
+});
+// → /users/123/posts/true
+```
+
+## Query Parameters
+
+<ParamField path="query" type="Record<string, string | number | boolean> | URLSearchParams">
+  Query parameters appended to the URL. Automatically URL-encoded.
+</ParamField>
+
+```typescript url.ts
+export type Query = Record<string, AllowedQueryParamValues> | URLSearchParams;
+
+interface URLOptions {
+  query?: Query;
+}
+```
+
+**Basic usage:**
+```typescript
+const { data } = await callApi("/users", {
+  query: {
+    page: 1,
+    limit: 10,
+    search: "john doe",
+    active: true
+  }
+});
+// → /users?page=1&limit=10&search=john%20doe&active=true
+```
+
+**With existing query string:**
+```typescript
+const { data } = await callApi("/users?sort=name", {
+  query: { page: 2 }
+});
+// → /users?sort=name&page=2
+```
+
+**Using URLSearchParams:**
+```typescript
+const params = new URLSearchParams();
+params.append("category", "electronics");
+params.append("category", "computers"); // Multiple values
+params.append("minPrice", "100");
+
+const { data } = await callApi("/products", { query: params });
+// → /products?category=electronics&category=computers&minPrice=100
+```
+
+**Implementation:**
+```typescript url.ts
+const mergeUrlWithQuery = (
+  url: string,
+  query: Query | undefined
+): string => {
+  if (!query) return url;
+  
+  const queryString = new URLSearchParams(
+    query as Record<string, string> | URLSearchParams
+  ).toString();
+  
+  if (queryString.length === 0) return url;
+  
+  if (url.endsWith("?")) {
+    return `${url}${queryString}`;
+  }
+  
+  if (url.includes("?")) {
+    return `${url}&${queryString}`;
+  }
+  
+  return `${url}?${queryString}`;
+};
+```
+
+## Method Prefixes
+
+Specify HTTP methods directly in the URL using `@method/` prefix:
+
+```typescript url.ts
+export type RouteKeyMethods = "delete" | "get" | "patch" | "post" | "put";
+export type RouteKeyMethodsURLUnion = `@${RouteKeyMethods}/`;
+
+export const extractMethodFromURL = (initURL: string | undefined) => {
+  if (!initURL?.startsWith("@")) return;
+  
+  const methodFromURL = routeKeyMethods.find((method) =>
+    initURL.startsWith(`@${method}/`)
+  );
+  
+  return methodFromURL;
+};
+```
+
+**Supported method prefixes:**
+- `@get/` - GET request
+- `@post/` - POST request
+- `@put/` - PUT request
+- `@patch/` - PATCH request
+- `@delete/` - DELETE request
+
+**Usage:**
+```typescript
+// Explicit method in URL
+const { data } = await callApi("@get/users");
+// Same as: callApi("/users", { method: "GET" })
+
+const { data } = await callApi("@post/users", {
+  body: { name: "John" }
+});
+// Same as: callApi("/users", { method: "POST", body: { name: "John" } })
+
+const { data } = await callApi("@delete/users/:id", {
+  params: { id: "123" }
+});
+// Same as: callApi("/users/123", { method: "DELETE" })
+```
+
+**With base URL:**
+```typescript
+const client = createFetchClient({
+  baseURL: "https://api.example.com"
+});
+
+await client("@get/users");
+// → GET https://api.example.com/users
+
+await client("@post/users/:id/posts", {
+  params: { id: "123" },
+  body: { title: "Hello" }
+});
+// → POST https://api.example.com/users/123/posts
+```
+
+**Method prefix is stripped from final URL:**
+```typescript url.ts
+export const normalizeURL = (
+  initURL: string,
+  options: { retainLeadingSlashForRelativeURLs?: boolean } = {}
+) => {
+  const methodFromURL = extractMethodFromURL(initURL);
+  
+  if (!methodFromURL) {
+    return initURL;
+  }
+  
+  const normalizedURL =
+    options.retainLeadingSlashForRelativeURLs && !initURL.includes("http") ?
+      initURL.replace(`@${methodFromURL}`, "")
+    : initURL.replace(`@${methodFromURL}/`, "");
+  
+  return normalizedURL;
+};
+```
+
+## Combining Features
+
+### Parameters + Query + Method Prefix
+
+```typescript
+const { data } = await callApi("@get/users/:userId/posts", {
+  params: { userId: "123" },
+  query: { page: 1, limit: 10 }
+});
+// → GET /users/123/posts?page=1&limit=10
+```
+
+### Base URL + All Features
+
+```typescript
+const client = createFetchClient({
+  baseURL: "https://api.example.com/v1"
+});
+
+const { data } = await client("@post/orgs/:orgId/repos", {
+  params: { orgId: "zayne-labs" },
+  query: { private: true },
+  body: { name: "callapi", description: "Awesome API client" }
+});
+// → POST https://api.example.com/v1/orgs/zayne-labs/repos?private=true
+```
+
+## URL Construction Flow
+
+The final URL is constructed in this order:
+
+```typescript url.ts
+export const getFullAndNormalizedURL = (options: GetFullURLOptions) => {
+  const { baseURL, initURL, params, query } = options;
+  
+  // 1. Remove method prefix (@get/, @post/, etc.)
+  const normalizedInitURL = normalizeURL(initURL);
+  
+  // 2. Substitute path parameters
+  const initURLWithParams = mergeUrlWithParams(normalizedInitURL, params);
+  
+  // 3. Add query parameters
+  const initURLWithParamsAndQuery = mergeUrlWithQuery(initURLWithParams, query);
+  
+  // 4. Prepend base URL (if relative)
+  const fullURL = getFullURL(initURLWithParamsAndQuery, baseURL);
+  
+  return { fullURL, normalizedInitURL };
+};
+```
+
+**Example:**
+```typescript
+// Input
+baseURL: "https://api.example.com"
+initURL: "@get/orgs/:orgId/repos/{repoId}"
+params: { orgId: "zayne", repoId: "callapi" }
+query: { branch: "main" }
+
+// Step-by-step:
+// 1. normalizeURL: "/orgs/:orgId/repos/{repoId}"
+// 2. mergeUrlWithParams: "/orgs/zayne/repos/callapi"
+// 3. mergeUrlWithQuery: "/orgs/zayne/repos/callapi?branch=main"
+// 4. getFullURL: "https://api.example.com/orgs/zayne/repos/callapi?branch=main"
+```
+
+## Advanced Examples
+
+### Dynamic URL Construction
+
+```typescript
+function fetchResource(type: "users" | "posts", id: string, filters?: Record<string, any>) {
+  return callApi(`@get/${type}/:id`, {
+    params: { id },
+    query: filters
+  });
+}
+
+const user = await fetchResource("users", "123");
+const posts = await fetchResource("posts", "456", { status: "published" });
+```
+
+### Nested Resources
+
+```typescript
+const { data } = await callApi("@get/orgs/:org/projects/:project/issues/:issue/comments", {
+  params: {
+    org: "zayne-labs",
+    project: "callapi",
+    issue: "42"
+  },
+  query: {
+    sort: "created",
+    order: "desc",
+    per_page: 20
+  }
+});
+// → GET /orgs/zayne-labs/projects/callapi/issues/42/comments?sort=created&order=desc&per_page=20
+```
+
+### URL Templates
+
+```typescript
+const API_ROUTES = {
+  getUser: "@get/users/:userId",
+  updateUser: "@patch/users/:userId",
+  deleteUser: "@delete/users/:userId",
+  getUserPosts: "@get/users/:userId/posts",
+  createPost: "@post/users/:userId/posts"
+} as const;
+
+const client = createFetchClient({
+  baseURL: "https://api.example.com"
+});
+
+// Use templates
+await client(API_ROUTES.getUser, { params: { userId: "123" } });
+await client(API_ROUTES.updateUser, {
+  params: { userId: "123" },
+  body: { name: "Jane" }
+});
+```
+
+## Best Practices
+
+<Tip>
+**Use Object-Style Parameters**: Named parameters are more maintainable and self-documenting:
+
+```typescript
+// Good
+params: { userId: "123", postId: "456" }
+
+// Less clear
+params: ["123", "456"]
+```
+</Tip>
+
+<Note>
+**Parameter Syntax Consistency**: Both `:param` and `{param}` work identically. Choose one style and stick with it:
+
+```typescript
+// Consistent
+"/users/:id/posts/:postId"
+"/users/{id}/posts/{postId}"
+
+// Inconsistent (but works)
+"/users/:id/posts/{postId}"
+```
+</Note>
+
+<Warning>
+**URL Validation**: CallApi validates the final URL and logs errors for invalid URLs:
+
+```typescript
+// Missing baseURL for relative URL
+await callApi("/users"); // Error logged
+
+// Fix: provide baseURL
+const client = createFetchClient({ baseURL: "https://api.example.com" });
+await client("/users"); // ✓
+```
+</Warning>
+
+## Related
+
+- [Quick Start](/quickstart) - Basic usage examples
+- [Authorization](/features/authorization) - Add auth to requests
+- [Type Safety](/advanced/typescript) - Type-safe URLs with schemas

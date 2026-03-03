@@ -1,0 +1,508 @@
+---
+title: Hooks
+description: Lifecycle hooks for intercepting CallApi request and response flow
+---
+
+## Overview
+
+The `Hooks` interface provides lifecycle hooks that allow you to intercept and customize various stages of the HTTP request/response cycle. Hooks are useful for logging, authentication, error handling, progress tracking, and other cross-cutting concerns.
+
+## Type Definition
+
+```typescript
+interface Hooks<TCallApiContext extends CallApiContext = DefaultCallApiContext> {
+  onError?: (context: ErrorContext) => Awaitable<unknown>;
+  onRequest?: (context: RequestContext) => Awaitable<unknown>;
+  onRequestError?: (context: RequestErrorContext) => Awaitable<unknown>;
+  onRequestReady?: (context: RequestContext) => Awaitable<unknown>;
+  onRequestStream?: (context: RequestStreamContext) => Awaitable<unknown>;
+  onResponse?: (context: ResponseContext) => Awaitable<unknown>;
+  onResponseError?: (context: ResponseErrorContext) => Awaitable<unknown>;
+  onResponseStream?: (context: ResponseStreamContext) => Awaitable<unknown>;
+  onRetry?: (context: RetryContext) => Awaitable<unknown>;
+  onSuccess?: (context: SuccessContext) => Awaitable<unknown>;
+  onValidationError?: (context: ValidationErrorContext) => Awaitable<unknown>;
+}
+```
+
+## Hook Lifecycle
+
+Hooks are called in this order during a request:
+
+1. **onRequest** - Before the request is sent
+2. **onRequestReady** - Just before fetch is called
+3. **onRequestStream** - During upload (if streaming)
+4. *Fetch happens*
+5. **onResponseStream** - During download (if streaming)
+6. **onResponse** - When response is received
+7. **onSuccess** OR **onResponseError** - Based on HTTP status
+8. **onValidationError** - If validation fails
+9. **onRequestError** - If network error occurs
+10. **onRetry** - If request is retried
+11. **onError** - For any error
+
+## Available Hooks
+
+### onRequest
+
+<ParamField path="onRequest" type="(context: RequestContext) => Awaitable<unknown>">
+  Called before the HTTP request is sent and before any internal processing begins.
+
+  **Use Cases:**
+  - Add authentication headers
+  - Modify request headers or body
+  - Log outgoing requests
+  - Add request timestamps
+
+  ```typescript
+  const api = createFetchClient({
+    baseURL: 'https://api.example.com',
+    onRequest: ({ request, options }) => {
+      console.log('Sending request:', request.method, request.url);
+      
+      // Add auth header
+      request.headers['Authorization'] = `Bearer ${getToken()}`;
+      
+      // Add timestamp
+      options.meta = {
+        ...options.meta,
+        requestStartTime: Date.now()
+      };
+    }
+  });
+  ```
+</ParamField>
+
+### onRequestReady
+
+<ParamField path="onRequestReady" type="(context: RequestContext) => Awaitable<unknown>">
+  Called just before the HTTP request is sent, after the request has been processed.
+
+  ```typescript
+  onRequestReady: ({ request }) => {
+    console.log('Final request headers:', request.headers);
+  }
+  ```
+</ParamField>
+
+### onResponse
+
+<ParamField path="onResponse" type="(context: ResponseContext) => Awaitable<unknown>">
+  Called when any HTTP response is received, regardless of status code.
+
+  **Use Cases:**
+  - Log all responses
+  - Track response metrics
+  - Handle rate limiting headers
+
+  ```typescript
+  onResponse: ({ response, data, error, options }) => {
+    const duration = Date.now() - options.meta?.requestStartTime;
+    console.log('Response received:', {
+      status: response.status,
+      duration,
+      success: error === null
+    });
+    
+    // Check rate limit headers
+    const remaining = response.headers.get('X-RateLimit-Remaining');
+    if (remaining && parseInt(remaining) < 10) {
+      console.warn('Approaching rate limit');
+    }
+  }
+  ```
+</ParamField>
+
+### onSuccess
+
+<ParamField path="onSuccess" type="(context: SuccessContext) => Awaitable<unknown>">
+  Called when a successful response (2xx status) is received.
+
+  **Use Cases:**
+  - Cache successful responses
+  - Track successful operations
+  - Post-process response data
+
+  ```typescript
+  const cache = new Map();
+  
+  onSuccess: ({ data, response, request }) => {
+    console.log('Request succeeded:', data);
+    
+    // Cache GET requests
+    if (request.method === 'GET') {
+      cache.set(response.url, data);
+    }
+    
+    // Track analytics
+    analytics.track('api_success', {
+      endpoint: response.url,
+      status: response.status
+    });
+  }
+  ```
+</ParamField>
+
+### onError
+
+<ParamField path="onError" type="(context: ErrorContext) => Awaitable<unknown>">
+  Called when any error occurs (HTTP errors, network errors, or validation errors).
+
+  **Use Cases:**
+  - Centralized error logging
+  - Error reporting to monitoring service
+  - Display user notifications
+
+  ```typescript
+  onError: ({ error, response, options }) => {
+    console.error('Request failed:', error.message);
+    
+    // Log to monitoring service
+    errorLogger.log({
+      type: error.name,
+      message: error.message,
+      status: response?.status,
+      url: options.baseURL
+    });
+    
+    // Show user notification
+    if (error.name === 'HTTPError') {
+      toast.error(`Request failed: ${error.message}`);
+    }
+  }
+  ```
+</ParamField>
+
+### onResponseError
+
+<ParamField path="onResponseError" type="(context: ResponseErrorContext) => Awaitable<unknown>">
+  Called when an HTTP error response (4xx, 5xx) is received.
+
+  **Use Cases:**
+  - Handle authentication errors
+  - Parse and log error responses
+  - Trigger error recovery
+
+  ```typescript
+  onResponseError: async ({ error, response, request }) => {
+    console.error('HTTP error:', response.status, error.errorData);
+    
+    // Handle 401 Unauthorized
+    if (response.status === 401) {
+      await refreshAuthToken();
+      // Optionally retry the request
+    }
+    
+    // Handle 429 Rate Limit
+    if (response.status === 429) {
+      const retryAfter = response.headers.get('Retry-After');
+      console.warn(`Rate limited. Retry after ${retryAfter}s`);
+    }
+  }
+  ```
+</ParamField>
+
+### onRequestError
+
+<ParamField path="onRequestError" type="(context: RequestErrorContext) => Awaitable<unknown>">
+  Called when a network-level error occurs (connection failure, timeout, etc.).
+
+  **Use Cases:**
+  - Handle network failures
+  - Implement offline detection
+  - Log connection issues
+
+  ```typescript
+  onRequestError: ({ error }) => {
+    console.error('Network error:', error.message);
+    
+    // Detect specific error types
+    if (error.name === 'TimeoutError') {
+      toast.error('Request timed out. Please try again.');
+    } else if (error.name === 'TypeError') {
+      toast.error('Network connection failed.');
+      // Check online status
+      if (!navigator.onLine) {
+        console.log('User is offline');
+      }
+    }
+  }
+  ```
+</ParamField>
+
+### onValidationError
+
+<ParamField path="onValidationError" type="(context: ValidationErrorContext) => Awaitable<unknown>">
+  Called when request or response data fails schema validation.
+
+  **Use Cases:**
+  - Log validation failures
+  - Send validation errors to monitoring
+  - Handle schema mismatches
+
+  ```typescript
+  onValidationError: ({ error }) => {
+    console.error('Validation error:', {
+      cause: error.issueCause, // 'request' or 'response'
+      message: error.message,
+      errors: error.errorData
+    });
+    
+    // Log to error tracking
+    if (error.issueCause === 'response') {
+      errorTracker.log('schema_mismatch', {
+        endpoint: response?.url,
+        errors: error.errorData
+      });
+    }
+  }
+  ```
+</ParamField>
+
+### onRetry
+
+<ParamField path="onRetry" type="(context: RetryContext) => Awaitable<unknown>">
+  Called before each retry attempt.
+
+  **Use Cases:**
+  - Log retry attempts
+  - Implement custom backoff logic
+  - Track retry metrics
+
+  ```typescript
+  onRetry: ({ error, retryAttemptCount, options }) => {
+    console.log(`Retrying request (attempt ${retryAttemptCount})`, {
+      error: error.message,
+      maxRetries: options.retry
+    });
+    
+    // Track retry metrics
+    analytics.track('api_retry', {
+      attempt: retryAttemptCount,
+      errorType: error.name
+    });
+  }
+  ```
+</ParamField>
+
+### onRequestStream
+
+<ParamField path="onRequestStream" type="(context: RequestStreamContext) => Awaitable<unknown>">
+  Called during upload stream progress tracking.
+
+  **Use Cases:**
+  - Display upload progress bars
+  - Track upload metrics
+  - Implement upload cancellation
+
+  ```typescript
+  onRequestStream: ({ event, requestInstance }) => {
+    const progress = (event.loaded / event.total) * 100;
+    console.log(`Upload progress: ${progress.toFixed(2)}%`);
+    
+    // Update progress bar
+    progressBar.style.width = `${progress}%`;
+    
+    // Track upload speed
+    const speed = event.loaded / (Date.now() - event.startTime);
+    console.log(`Upload speed: ${formatBytes(speed)}/s`);
+  }
+  ```
+</ParamField>
+
+### onResponseStream
+
+<ParamField path="onResponseStream" type="(context: ResponseStreamContext) => Awaitable<unknown>">
+  Called during download stream progress tracking.
+
+  **Use Cases:**
+  - Display download progress bars
+  - Track download metrics
+  - Implement download cancellation
+
+  ```typescript
+  onResponseStream: ({ event, response }) => {
+    const progress = (event.loaded / event.total) * 100;
+    console.log(`Download progress: ${progress.toFixed(2)}%`);
+    
+    // Update UI
+    downloadProgress.textContent = `${progress.toFixed(0)}%`;
+    downloadProgress.setAttribute('value', progress);
+  }
+  ```
+</ParamField>
+
+## Hook Contexts
+
+All hooks receive a context object with relevant information. Here are the common context properties:
+
+### RequestContext
+
+<ParamField path="baseConfig" type="BaseCallApiConfig" required>
+  Base configuration object passed to createFetchClient.
+</ParamField>
+
+<ParamField path="config" type="CallApiConfig" required>
+  Instance-specific configuration object.
+</ParamField>
+
+<ParamField path="options" type="CallApiExtraOptions" required>
+  Merged options combining base config, instance config, and defaults.
+</ParamField>
+
+<ParamField path="request" type="CallApiRequestOptions" required>
+  Merged request object ready to be sent. Can be modified in onRequest hooks.
+</ParamField>
+
+### SuccessContext
+
+Extends `RequestContext` with:
+
+<ParamField path="data" type="TData" required>
+  The parsed response data.
+</ParamField>
+
+<ParamField path="response" type="Response" required>
+  The Response object.
+</ParamField>
+
+### ErrorContext
+
+Extends `RequestContext` with:
+
+<ParamField path="error" type="ErrorVariant" required>
+  Error information object.
+</ParamField>
+
+<ParamField path="response" type="Response | null" required>
+  The Response object if available, or null for network errors.
+</ParamField>
+
+### RetryContext
+
+Extends `ErrorContext` with:
+
+<ParamField path="retryAttemptCount" type="number" required>
+  Current retry attempt number (1-indexed).
+</ParamField>
+
+### Stream Contexts
+
+<ParamField path="event" type="StreamProgressEvent" required>
+  Progress event with `loaded`, `total`, and timing information.
+</ParamField>
+
+## Hook Arrays
+
+You can provide multiple hooks as an array:
+
+```typescript
+const api = createFetchClient({
+  baseURL: 'https://api.example.com',
+  onRequest: [
+    ({ request }) => {
+      console.log('Hook 1: Adding auth');
+      request.headers['Authorization'] = `Bearer ${token}`;
+    },
+    ({ request }) => {
+      console.log('Hook 2: Adding timestamp');
+      request.headers['X-Timestamp'] = Date.now().toString();
+    },
+    async ({ request }) => {
+      console.log('Hook 3: Async operation');
+      await logRequest(request);
+    }
+  ]
+});
+```
+
+## Hook Execution Mode
+
+Control how multiple hooks execute:
+
+<ParamField path="hooksExecutionMode" type="'parallel' | 'sequential'" default="parallel">
+  - **parallel**: All hooks execute simultaneously via Promise.all()
+  - **sequential**: Hooks execute one by one in registration order
+
+  ```typescript
+  const api = createFetchClient({
+    baseURL: 'https://api.example.com',
+    hooksExecutionMode: 'sequential',
+    onRequest: [
+      async ({ request }) => {
+        // This completes before hook 2 starts
+        await operation1();
+      },
+      async ({ request }) => {
+        // This starts after hook 1 completes
+        await operation2();
+      }
+    ]
+  });
+  ```
+</ParamField>
+
+## Examples
+
+### Complete Logging Setup
+
+```typescript
+const api = createFetchClient({
+  baseURL: 'https://api.example.com',
+  onRequest: ({ request, options }) => {
+    console.log('→ Request:', request.method, request.url);
+    options.meta = { startTime: Date.now() };
+  },
+  onResponse: ({ response, options }) => {
+    const duration = Date.now() - options.meta.startTime;
+    console.log('← Response:', response.status, `${duration}ms`);
+  },
+  onSuccess: ({ data }) => {
+    console.log('✓ Success:', data);
+  },
+  onError: ({ error }) => {
+    console.error('✗ Error:', error.message);
+  }
+});
+```
+
+### Authentication with Token Refresh
+
+```typescript
+let authToken = 'initial-token';
+
+const api = createFetchClient({
+  baseURL: 'https://api.example.com',
+  onRequest: ({ request }) => {
+    request.headers['Authorization'] = `Bearer ${authToken}`;
+  },
+  onResponseError: async ({ response, error }) => {
+    if (response.status === 401) {
+      console.log('Token expired, refreshing...');
+      authToken = await refreshAuthToken();
+    }
+  }
+});
+```
+
+### Progress Tracking
+
+```typescript
+const api = createFetchClient({
+  baseURL: 'https://api.example.com',
+  onRequestStream: ({ event }) => {
+    const percent = (event.loaded / event.total) * 100;
+    updateUploadProgress(percent);
+  },
+  onResponseStream: ({ event }) => {
+    const percent = (event.loaded / event.total) * 100;
+    updateDownloadProgress(percent);
+  }
+});
+```
+
+## See Also
+
+- [CallApiExtraOptions](/api/config/extra-options) - Configuration options including hooks
+- [CallApiResult](/api/types/call-api-result) - Result types used in hook contexts
+- [Middlewares](/api/types/middlewares) - Fetch middleware for lower-level interception

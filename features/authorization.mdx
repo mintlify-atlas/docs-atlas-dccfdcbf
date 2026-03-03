@@ -1,0 +1,526 @@
+---
+title: 'Authorization'
+description: 'Built-in authentication helpers for Bearer, Basic, Token, and custom auth schemes'
+---
+
+## Overview
+
+CallApi provides type-safe authentication helpers for common authorization schemes. All auth options support both static values and async functions for dynamic token retrieval.
+
+## Quick Start
+
+```typescript
+import { callApi } from "@zayne-labs/callapi";
+
+// Bearer token
+const { data } = await callApi("/api/user", {
+  auth: "your-token-here"
+});
+// → Authorization: Bearer your-token-here
+
+// Bearer with explicit type
+const { data } = await callApi("/api/user", {
+  auth: {
+    type: "Bearer",
+    value: "your-token-here"
+  }
+});
+```
+
+## Auth Types
+
+```typescript auth.ts
+export type AuthOption = 
+  | PossibleAuthValueOrGetter 
+  | BearerAuth 
+  | TokenAuth 
+  | BasicAuth 
+  | CustomAuth;
+
+type PossibleAuthValue = Awaitable<string | null | undefined>;
+type PossibleAuthValueOrGetter = PossibleAuthValue | (() => PossibleAuthValue);
+```
+
+### Bearer Authentication
+
+The most common authentication scheme. Supports shorthand syntax.
+
+<ParamField path="auth" type="string | () => Promise<string>">
+  Shorthand for Bearer authentication. Accepts a token string or async function.
+</ParamField>
+
+<ParamField path="auth.type" type="Bearer" required>
+  Explicit Bearer authentication type
+</ParamField>
+
+<ParamField path="auth.value" type="string | () => Promise<string>" required>
+  Bearer token value or async getter function
+</ParamField>
+
+```typescript auth.ts
+export type BearerAuth = {
+  type: "Bearer";
+  value: PossibleAuthValueOrGetter;
+};
+```
+
+**Shorthand syntax (recommended):**
+```typescript
+// Static token
+const { data } = await callApi("/api/data", {
+  auth: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+});
+// → Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+
+// Async function
+const { data } = await callApi("/api/data", {
+  auth: async () => {
+    const token = await getAuthToken();
+    return token;
+  }
+});
+
+// Sync function
+const { data } = await callApi("/api/data", {
+  auth: () => localStorage.getItem("auth_token")
+});
+```
+
+**Explicit syntax:**
+```typescript
+const { data } = await callApi("/api/data", {
+  auth: {
+    type: "Bearer",
+    value: "your-token"
+  }
+});
+
+// With async value
+const { data } = await callApi("/api/data", {
+  auth: {
+    type: "Bearer",
+    value: async () => {
+      const session = await getSession();
+      return session.accessToken;
+    }
+  }
+});
+```
+
+### Token Authentication
+
+Similar to Bearer but uses "Token" prefix (common in Django REST Framework).
+
+<ParamField path="auth.type" type="Token" required>
+  Token authentication type
+</ParamField>
+
+<ParamField path="auth.value" type="string | () => Promise<string>" required>
+  Token value or async getter function
+</ParamField>
+
+```typescript auth.ts
+export type TokenAuth = {
+  type: "Token";
+  value: PossibleAuthValueOrGetter;
+};
+```
+
+**Usage:**
+```typescript
+const { data } = await callApi("/api/data", {
+  auth: {
+    type: "Token",
+    value: "9944b09199c62bcf9418ad846dd0e4bbdfc6ee4b"
+  }
+});
+// → Authorization: Token 9944b09199c62bcf9418ad846dd0e4bbdfc6ee4b
+
+// With async function
+const { data } = await callApi("/api/data", {
+  auth: {
+    type: "Token",
+    value: () => process.env.API_TOKEN
+  }
+});
+```
+
+### Basic Authentication
+
+HTTP Basic Authentication with username and password.
+
+<ParamField path="auth.type" type="Basic" required>
+  Basic authentication type
+</ParamField>
+
+<ParamField path="auth.username" type="string | () => Promise<string>" required>
+  Username or async getter function
+</ParamField>
+
+<ParamField path="auth.password" type="string | () => Promise<string>" required>
+  Password or async getter function
+</ParamField>
+
+```typescript auth.ts
+export type BasicAuth = {
+  type: "Basic";
+  username: PossibleAuthValueOrGetter;
+  password: PossibleAuthValueOrGetter;
+};
+```
+
+**Usage:**
+```typescript
+const { data } = await callApi("/api/data", {
+  auth: {
+    type: "Basic",
+    username: "admin",
+    password: "secret123"
+  }
+});
+// → Authorization: Basic YWRtaW46c2VjcmV0MTIz (base64 encoded)
+
+// With async credentials
+const { data } = await callApi("/api/data", {
+  auth: {
+    type: "Basic",
+    username: async () => await getUsername(),
+    password: async () => await getPassword()
+  }
+});
+
+// With environment variables
+const { data } = await callApi("/api/data", {
+  auth: {
+    type: "Basic",
+    username: () => process.env.API_USERNAME,
+    password: () => process.env.API_PASSWORD
+  }
+});
+```
+
+**Implementation:**
+```typescript auth.ts
+case "Basic": {
+  const [username, password] = await Promise.all([
+    resolveAuthValue(auth.username),
+    resolveAuthValue(auth.password)
+  ]);
+  
+  if (username === undefined || password === undefined) return;
+  
+  return {
+    Authorization: `Basic ${globalThis.btoa(`${username}:${password}`)}`
+  };
+}
+```
+
+### Custom Authentication
+
+Create custom authorization headers with any prefix.
+
+<ParamField path="auth.type" type="Custom" required>
+  Custom authentication type
+</ParamField>
+
+<ParamField path="auth.prefix" type="string | () => Promise<string>" required>
+  Authorization scheme prefix (e.g., "ApiKey", "JWT", "Bearer")
+</ParamField>
+
+<ParamField path="auth.value" type="string | () => Promise<string>" required>
+  Auth value or async getter function
+</ParamField>
+
+```typescript auth.ts
+export type CustomAuth = {
+  type: "Custom";
+  prefix: PossibleAuthValueOrGetter;
+  value: PossibleAuthValueOrGetter;
+};
+```
+
+**Usage:**
+```typescript
+// API Key authentication
+const { data } = await callApi("/api/data", {
+  auth: {
+    type: "Custom",
+    prefix: "ApiKey",
+    value: "abc123xyz789"
+  }
+});
+// → Authorization: ApiKey abc123xyz789
+
+// AWS Signature
+const { data } = await callApi("/api/data", {
+  auth: {
+    type: "Custom",
+    prefix: "AWS4-HMAC-SHA256",
+    value: async () => await generateAWSSignature()
+  }
+});
+
+// Custom JWT prefix
+const { data } = await callApi("/api/data", {
+  auth: {
+    type: "Custom",
+    prefix: "JWT",
+    value: () => getJWTToken()
+  }
+});
+```
+
+## Auth Helper Implementation
+
+From the source code:
+
+```typescript auth.ts
+const resolveAuthValue = (value: PossibleAuthValueOrGetter) => 
+  isFunction(value) ? value() : value;
+
+export const getAuthHeader = async (
+  auth: AuthOption
+): Promise<{ Authorization: string } | undefined> => {
+  if (auth === undefined) return;
+  
+  // Shorthand: string, function, or promise → Bearer
+  if (isPromise(auth) || isFunction(auth) || !isObject(auth)) {
+    const authValue = await resolveAuthValue(auth);
+    
+    if (authValue === undefined) return;
+    
+    return {
+      Authorization: `Bearer ${authValue}`
+    };
+  }
+  
+  // Explicit auth types
+  switch (auth.type) {
+    case "Bearer": {
+      const value = await resolveAuthValue(auth.value);
+      if (value === undefined) return;
+      return { Authorization: `Bearer ${value}` };
+    }
+    
+    case "Token": {
+      const value = await resolveAuthValue(auth.value);
+      if (value === undefined) return;
+      return { Authorization: `Token ${value}` };
+    }
+    
+    case "Basic": {
+      const [username, password] = await Promise.all([
+        resolveAuthValue(auth.username),
+        resolveAuthValue(auth.password)
+      ]);
+      if (username === undefined || password === undefined) return;
+      return { Authorization: `Basic ${globalThis.btoa(`${username}:${password}`)}` };
+    }
+    
+    case "Custom": {
+      const [prefix, value] = await Promise.all([
+        resolveAuthValue(auth.prefix),
+        resolveAuthValue(auth.value)
+      ]);
+      if (value === undefined) return;
+      return { Authorization: `${prefix} ${value}` };
+    }
+  }
+};
+```
+
+## Advanced Examples
+
+### Token Refresh
+
+```typescript
+let cachedToken: string | null = null;
+let tokenExpiry: number | null = null;
+
+async function getAccessToken() {
+  // Return cached token if still valid
+  if (cachedToken && tokenExpiry && Date.now() < tokenExpiry) {
+    return cachedToken;
+  }
+  
+  // Refresh token
+  const response = await fetch("/api/auth/refresh", {
+    method: "POST",
+    credentials: "include"
+  });
+  
+  const { accessToken, expiresIn } = await response.json();
+  
+  cachedToken = accessToken;
+  tokenExpiry = Date.now() + (expiresIn * 1000);
+  
+  return accessToken;
+}
+
+// Use with CallApi
+const { data } = await callApi("/api/protected", {
+  auth: getAccessToken // Automatically refreshes when needed
+});
+```
+
+### Global Auth with Override
+
+```typescript
+const client = createFetchClient({
+  baseURL: "https://api.example.com",
+  auth: async () => {
+    const session = await getSession();
+    return session.accessToken;
+  }
+});
+
+// Uses global auth
+const userData = await client("/api/user");
+
+// Override for specific request
+const adminData = await client("/api/admin", {
+  auth: async () => {
+    const adminToken = await getAdminToken();
+    return adminToken;
+  }
+});
+
+// Disable auth for specific request
+const publicData = await client("/api/public", {
+  auth: undefined
+});
+```
+
+### Multi-Service Auth
+
+```typescript
+const authStrategies = {
+  userService: async () => {
+    const token = await getUserServiceToken();
+    return token;
+  },
+  adminService: {
+    type: "Basic" as const,
+    username: () => process.env.ADMIN_USER!,
+    password: () => process.env.ADMIN_PASS!
+  },
+  legacyApi: {
+    type: "Custom" as const,
+    prefix: "ApiKey",
+    value: () => process.env.LEGACY_API_KEY!
+  }
+};
+
+// Use different auth per service
+const userClient = createFetchClient({
+  baseURL: "https://user-service.example.com",
+  auth: authStrategies.userService
+});
+
+const adminClient = createFetchClient({
+  baseURL: "https://admin-service.example.com",
+  auth: authStrategies.adminService
+});
+
+const legacyClient = createFetchClient({
+  baseURL: "https://legacy-api.example.com",
+  auth: authStrategies.legacyApi
+});
+```
+
+### Conditional Auth
+
+```typescript
+async function makeRequest(endpoint: string, requiresAuth: boolean) {
+  return callApi(endpoint, {
+    auth: requiresAuth ? async () => await getToken() : undefined
+  });
+}
+
+// Or with client
+const client = createFetchClient({
+  baseURL: "https://api.example.com",
+  auth: async () => {
+    // Only add auth if user is logged in
+    const isLoggedIn = await checkAuthStatus();
+    if (!isLoggedIn) return null; // Returns no auth header
+    
+    return await getToken();
+  }
+});
+```
+
+### Auth with Retry on 401
+
+```typescript
+const { data, error } = await callApi("/api/data", {
+  auth: async () => await getToken(),
+  retryAttempts: 1,
+  retryCondition: async (context) => {
+    // Retry once on 401 with refreshed token
+    if (context.response?.status === 401) {
+      await refreshToken();
+      return true;
+    }
+    return false;
+  }
+});
+```
+
+## Best Practices
+
+<Tip>
+**Use Async Functions for Dynamic Tokens**: Always fetch tokens dynamically to ensure they're fresh:
+
+```typescript
+// Good - fresh token on every request
+auth: async () => await getToken()
+
+// Bad - token captured at client creation
+const token = await getToken();
+auth: token
+```
+</Tip>
+
+<Warning>
+**Return null/undefined for Conditional Auth**: If auth isn't needed, return `null` or `undefined` from your auth function:
+
+```typescript
+auth: async () => {
+  const user = await getCurrentUser();
+  if (!user) return null; // No auth header added
+  return user.token;
+}
+```
+</Warning>
+
+<Note>
+**Auth Headers in Deduplication**: Authorization headers are excluded from default deduplication keys to allow token refreshes without breaking deduplication.
+</Note>
+
+## Schema Validation
+
+Validate auth values with schema validation:
+
+```typescript
+import { z } from "zod";
+
+const tokenSchema = z.string().min(20);
+
+const client = createFetchClient({
+  baseURL: "https://api.example.com",
+  schema: {
+    routes: {
+      "*": {
+        auth: tokenSchema // Validates all auth values
+      }
+    }
+  }
+});
+```
+
+## Related
+
+- [Quick Start](/quickstart) - Basic authentication examples
+- [Error Handling](/features/error-handling) - Handle 401/403 errors
+- [Retries & Timeout](/features/retries-and-timeout) - Retry on auth failures

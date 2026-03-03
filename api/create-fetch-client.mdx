@@ -1,0 +1,363 @@
+---
+title: createFetchClient
+description: Create a configured HTTP client with custom defaults and behavior
+---
+
+The `createFetchClient` function creates a new `callApi` instance with custom default configuration. This is useful for creating clients with shared settings like base URLs, headers, authentication, and hooks.
+
+## Function Signature
+
+```typescript
+function createFetchClient<
+  TBaseCallApiContext extends CallApiContext = DefaultCallApiContext,
+  TBaseData = TBaseCallApiContext["Data"],
+  TBaseErrorData = TBaseCallApiContext["ErrorData"],
+  TBaseResultMode extends ResultModeType = TBaseCallApiContext["ResultMode"],
+  TBaseThrowOnError extends boolean = false,
+  TBaseResponseType extends ResponseTypeType = "json",
+  const TBaseSchemaAndConfig extends BaseCallApiSchemaAndConfig = {},
+  const TBasePluginArray extends CallApiPlugin[] = [],
+>(
+  initBaseConfig?: BaseCallApiConfig<...>
+): CallApiFunction
+```
+
+## Parameters
+
+<ParamField path="initBaseConfig" type="BaseCallApiConfig | function" default="{}">
+  Base configuration applied to all requests made with this client. Can be an object or a function that returns configuration dynamically.
+  
+  ### Static Configuration
+  
+  ```typescript
+  const api = createFetchClient({
+    baseURL: 'https://api.example.com',
+    headers: { 'X-API-Key': 'secret' },
+    timeout: 10000
+  })
+  ```
+  
+  ### Dynamic Configuration
+  
+  ```typescript
+  const api = createFetchClient(({ initURL, options, request }) => {
+    return {
+      baseURL: 'https://api.example.com',
+      headers: {
+        'Authorization': `Bearer ${getToken()}`,
+        'X-Request-ID': generateId()
+      }
+    }
+  })
+  ```
+  
+  ### Configuration Options
+  
+  All options from `callApi` are supported, plus:
+  
+  <ParamField path="initBaseConfig.skipAutoMergeFor" type="'all' | 'options' | 'request'">
+    Controls how base config merges with per-request config:
+    - `undefined`: Auto-merge both options and request
+    - `'options'`: Don't merge CallApi-specific options
+    - `'request'`: Don't merge fetch request options
+    - `'all'`: Don't merge anything (per-request config fully overrides)
+  </ParamField>
+  
+  <ParamField path="initBaseConfig.plugins" type="CallApiPlugin[]">
+    Array of plugins to extend client functionality.
+  </ParamField>
+</ParamField>
+
+## Return Type
+
+<ResponseField name="callApi" type="CallApiFunction">
+  Returns a `callApi` function with the base configuration pre-applied. The returned function has the same signature as the standalone `callApi` function.
+  
+  ```typescript
+  type CallApiFunction = <TData, TErrorData, ...>(
+    initURL: string,
+    initConfig?: CallApiConfig
+  ) => Promise<CallApiResult<TData, TErrorData, ...>>
+  ```
+</ResponseField>
+
+## Usage Examples
+
+### Basic Client with Base URL
+
+```typescript
+import { createFetchClient } from 'callapi'
+
+const api = createFetchClient({
+  baseURL: 'https://api.example.com',
+  headers: {
+    'Content-Type': 'application/json'
+  }
+})
+
+interface User {
+  id: number
+  name: string
+}
+
+// Base URL is automatically prepended
+const user = await api<User>('/users/1')
+// Requests to: https://api.example.com/users/1
+```
+
+### Client with Authentication
+
+```typescript
+const authenticatedApi = createFetchClient({
+  baseURL: 'https://api.example.com',
+  headers: {
+    'Authorization': `Bearer ${process.env.API_TOKEN}`
+  },
+  onError: ({ error, response }) => {
+    if (response?.status === 401) {
+      console.error('Authentication failed')
+      // Handle re-authentication
+    }
+  }
+})
+
+const user = await authenticatedApi<User>('/users/me')
+```
+
+### Dynamic Configuration Function
+
+```typescript
+let authToken: string | null = null
+
+const api = createFetchClient(({ initURL, options, request }) => {
+  const config: BaseCallApiConfig = {
+    baseURL: 'https://api.example.com'
+  }
+  
+  // Add auth header only if token exists
+  if (authToken) {
+    config.headers = {
+      'Authorization': `Bearer ${authToken}`
+    }
+  }
+  
+  // Add request ID for tracking
+  config.headers = {
+    ...config.headers,
+    'X-Request-ID': crypto.randomUUID(),
+    'X-Endpoint': initURL
+  }
+  
+  return config
+})
+
+// Login and set token
+const { token } = await api<{ token: string }>('/auth/login', {
+  method: 'POST',
+  body: { email: 'user@example.com', password: 'secret' }
+})
+authToken = token
+
+// Subsequent requests include the token
+const user = await api<User>('/users/me')
+```
+
+### Client with Default Error Handling
+
+```typescript
+const api = createFetchClient({
+  baseURL: 'https://api.example.com',
+  resultMode: 'result',
+  onResponseError: ({ error, response }) => {
+    // Log all HTTP errors
+    console.error(`HTTP ${response.status}:`, error.message)
+  },
+  onRequestError: ({ error }) => {
+    // Log network errors
+    console.error('Network error:', error.message)
+  },
+  onValidationError: ({ error }) => {
+    // Log validation errors
+    console.error('Validation error:', error.message)
+  }
+})
+
+interface User {
+  id: number
+  name: string
+}
+
+const { data, error } = await api<User>('/users/1')
+if (error) {
+  // Error already logged by hooks
+  return
+}
+```
+
+### Client with Retry and Timeout
+
+```typescript
+const resilientApi = createFetchClient({
+  baseURL: 'https://api.example.com',
+  timeout: 10000, // 10 seconds
+  retry: {
+    count: 3,
+    delay: 1000,
+    statusCodes: [408, 429, 500, 502, 503, 504],
+    methods: ['GET', 'PUT', 'DELETE']
+  },
+  onRequest: ({ request }) => {
+    console.log(`Requesting: ${request.method} ${request.url}`)
+  }
+})
+
+const data = await resilientApi<User[]>('/users')
+```
+
+### Multiple Clients for Different APIs
+
+```typescript
+// Public API client
+const publicApi = createFetchClient({
+  baseURL: 'https://api.example.com/v1',
+  timeout: 5000
+})
+
+// Admin API client with different auth
+const adminApi = createFetchClient({
+  baseURL: 'https://admin.example.com/v1',
+  headers: {
+    'X-Admin-Key': process.env.ADMIN_API_KEY
+  },
+  timeout: 30000 // Longer timeout for admin operations
+})
+
+// Analytics API client
+const analyticsApi = createFetchClient({
+  baseURL: 'https://analytics.example.com',
+  responseType: 'json',
+  dedupe: { 
+    strategy: 'defer', // Dedupe analytics requests
+    scope: 'global' 
+  }
+})
+
+// Use different clients for different purposes
+const user = await publicApi<User>('/users/1')
+const adminStats = await adminApi<Stats>('/stats')
+const events = await analyticsApi<Event[]>('/events')
+```
+
+### Client with Request/Response Logging
+
+```typescript
+const loggingApi = createFetchClient({
+  baseURL: 'https://api.example.com',
+  onRequest: ({ options, request }) => {
+    console.log('→', request.method, options.fullURL)
+    console.log('  Headers:', request.headers)
+    if (request.body) {
+      console.log('  Body:', request.body)
+    }
+  },
+  onSuccess: ({ data, response }) => {
+    console.log('← ', response.status, response.statusText)
+    console.log('  Data:', data)
+  },
+  onError: ({ error, response }) => {
+    console.error('✗', response?.status || 'Network Error')
+    console.error('  Error:', error.message)
+  }
+})
+
+const result = await loggingApi<User>('/users/1')
+```
+
+### Overriding Base Configuration
+
+```typescript
+const api = createFetchClient({
+  baseURL: 'https://api.example.com',
+  timeout: 5000,
+  headers: {
+    'X-Client-Version': '1.0.0'
+  }
+})
+
+// Override base config for specific request
+const user = await api<User>('/users/1', {
+  timeout: 10000, // Override timeout
+  headers: {
+    'X-Client-Version': '2.0.0', // Override header
+    'X-Custom-Header': 'value' // Add new header
+  }
+})
+
+// Prevent auto-merge to completely replace config
+const data = await api<User>('/users/1', {
+  skipAutoMergeFor: 'all',
+  // This request uses NO base config
+  baseURL: 'https://different-api.com',
+  headers: {
+    'Authorization': 'Bearer different-token'
+  }
+})
+```
+
+### Client with Schema Validation
+
+```typescript
+import { z } from 'zod'
+
+const UserSchema = z.object({
+  id: z.number(),
+  name: z.string(),
+  email: z.string().email()
+})
+
+const validatedApi = createFetchClient({
+  baseURL: 'https://api.example.com',
+  schema: {
+    '/users/:id': {
+      data: UserSchema
+    }
+  },
+  onValidationError: ({ error }) => {
+    console.error('Invalid response:', error.message)
+  }
+})
+
+// Response is automatically validated against schema
+const user = await validatedApi<z.infer<typeof UserSchema>>('/users/1')
+```
+
+## Type Inference
+
+The created client inherits all type inference capabilities:
+
+```typescript
+const api = createFetchClient({
+  baseURL: 'https://api.example.com',
+  resultMode: 'result' // Set default result mode
+})
+
+// Return type is inferred as { data: User | null, error: ..., response: ... }
+const result = await api<User>('/users/1')
+
+// Override result mode for specific request
+const user = await api<User>('/users/1', { resultMode: 'simple' })
+// Return type is inferred as User | null
+```
+
+## Best Practices
+
+1. **Create clients per API domain**: Separate clients for different APIs or services
+2. **Use dynamic config for auth**: Update tokens without recreating the client
+3. **Set sensible defaults**: Configure timeouts, retries, and error handling once
+4. **Add logging in development**: Use hooks to debug requests and responses
+5. **Type your responses**: Always provide TypeScript types for type safety
+
+## Related
+
+- [callApi](/api/call-api) - Default client instance
+- [createFetchClientWithContext](/api/create-fetch-client-with-context) - Create client with custom context types

@@ -1,0 +1,573 @@
+---
+title: TanStack Integration
+description: Use CallApi across the TanStack ecosystem
+icon: Layers
+---
+
+CallApi integrates seamlessly with the entire TanStack ecosystem, providing consistent patterns across different frameworks and libraries. This guide covers integration patterns for TanStack Query, Router, and Table.
+
+## TanStack Query (React Query)
+
+For detailed React Query integration, see the [React Query Integration](/integrations/react-query) guide.
+
+### Quick Setup
+
+```ts title="lib/api-client.ts"
+import { createFetchClient } from "@zayne-labs/callapi";
+
+export const queryClient = createFetchClient({
+	baseURL: import.meta.env.VITE_API_URL,
+	throwOnError: true,
+	resultMode: "onlyData",
+	retryAttempts: 2,
+});
+```
+
+### Other Framework Variants
+
+The same patterns work across all TanStack Query variants:
+
+#### Vue Query
+
+```ts title="composables/useTodos.ts"
+import { useQuery } from "@tanstack/vue-query";
+import { queryClient } from "@/lib/api-client";
+import { z } from "zod";
+
+const todoSchema = z.object({
+	id: z.number(),
+	title: z.string(),
+	completed: z.boolean(),
+});
+
+export function useTodos() {
+	return useQuery({
+		queryKey: ["todos"],
+		queryFn: () => queryClient("/todos", { schema: { data: z.array(todoSchema) } }),
+	});
+}
+```
+
+#### Svelte Query
+
+```ts title="lib/queries.ts"
+import { createQuery } from "@tanstack/svelte-query";
+import { queryClient } from "./api-client";
+
+type Todo = {
+	id: number;
+	title: string;
+	completed: boolean;
+};
+
+export function todosQuery() {
+	return createQuery({
+		queryKey: ["todos"],
+		queryFn: () => queryClient<Todo[], false>("/todos"),
+	});
+}
+```
+
+#### Solid Query
+
+```tsx title="components/TodoList.tsx"
+import { createQuery } from "@tanstack/solid-query";
+import { queryClient } from "~/lib/api-client";
+
+type Todo = {
+	id: number;
+	title: string;
+	completed: boolean;
+};
+
+export function TodoList() {
+	const todos = createQuery(() => ({
+		queryKey: ["todos"],
+		queryFn: () => queryClient<Todo[], false>("/todos"),
+	}));
+
+	return (
+		<Show when={!todos.isLoading} fallback={<div>Loading...</div>}>
+			<For each={todos.data}>{(todo) => <div>{todo.title}</div>}</For>
+		</Show>
+	);
+}
+```
+
+## TanStack Router
+
+TanStack Router's loaders work perfectly with CallApi:
+
+### Route Loaders
+
+```ts title="routes/todos.tsx"
+import { createFileRoute } from "@tanstack/react-router";
+import { queryClient } from "@/lib/api-client";
+import { z } from "zod";
+
+const todoSchema = z.object({
+	id: z.number(),
+	title: z.string(),
+	completed: z.boolean(),
+});
+
+export const Route = createFileRoute("/todos")({n	loader: async () => {
+		const todos = await queryClient("/todos", {
+			schema: { data: z.array(todoSchema) },
+		});
+		return { todos };
+	},
+});
+
+export default function Todos() {
+	const { todos } = Route.useLoaderData();
+
+	return (
+		<ul>
+			{todos.map((todo) => (
+				<li key={todo.id}>{todo.title}</li>
+			))}
+		</ul>
+	);
+}
+```
+
+### Dynamic Routes with Params
+
+```ts title="routes/todos.$id.tsx"
+import { createFileRoute } from "@tanstack/react-router";
+import { queryClient } from "@/lib/api-client";
+import { z } from "zod";
+
+const todoSchema = z.object({
+	id: z.number(),
+	title: z.string(),
+	completed: z.boolean(),
+	description: z.string(),
+});
+
+type TodoParams = {
+	id: string;
+};
+
+export const Route = createFileRoute("/todos/$id")({n	loader: async ({ params }: { params: TodoParams }) => {
+		const todo = await queryClient("/todos/:id", {
+			params: { id: Number(params.id) },
+			schema: { data: todoSchema },
+		});
+		return { todo };
+	},
+});
+
+export default function Todo() {
+	const { todo } = Route.useLoaderData();
+
+	return (
+		<div>
+			<h1>{todo.title}</h1>
+			<p>{todo.description}</p>
+		</div>
+	);
+}
+```
+
+### Combining Router with Query
+
+For the best experience, combine TanStack Router with TanStack Query:
+
+```ts title="routes/todos.tsx"
+import { createFileRoute } from "@tanstack/react-router";
+import { useQuery, useSuspenseQuery } from "@tanstack/react-query";
+import { queryClient } from "@/lib/api-client";
+import { z } from "zod";
+
+const todoSchema = z.object({
+	id: z.number(),
+	title: z.string(),
+	completed: z.boolean(),
+});
+
+const todosQueryOptions = {
+	queryKey: ["todos"],
+	queryFn: () => queryClient("/todos", { schema: { data: z.array(todoSchema) } }),
+};
+
+export const Route = createFileRoute("/todos")({n	// Prefetch in loader
+	loader: ({ context: { queryClient } }) => {
+		return queryClient.ensureQueryData(todosQueryOptions);
+	},
+});
+
+export default function Todos() {
+	// Use from cache in component
+	const { data: todos } = useSuspenseQuery(todosQueryOptions);
+
+	return (
+		<ul>
+			{todos.map((todo) => (
+				<li key={todo.id}>{todo.title}</li>
+			))}
+		</ul>
+	);
+}
+```
+
+### Error Handling in Loaders
+
+```ts title="routes/users.$id.tsx"
+import { createFileRoute } from "@tanstack/react-router";
+import { queryClient } from "@/lib/api-client";
+import { isHTTPErrorInstance } from "@zayne-labs/callapi/utils";
+import { z } from "zod";
+
+const userSchema = z.object({
+	id: z.number(),
+	name: z.string(),
+	email: z.string(),
+});
+
+export const Route = createFileRoute("/users/$id")({n	loader: async ({ params }) => {
+		try {
+			const user = await queryClient("/users/:id", {
+				params: { id: Number(params.id) },
+				schema: { data: userSchema },
+			});
+			return { user };
+		} catch (error) {
+			if (isHTTPErrorInstance(error) && error.response?.status === 404) {
+				throw new Error("User not found");
+			}
+			throw error;
+		}
+	},
+	errorComponent: ({ error }) => {
+		return <div>Error: {error.message}</div>;
+	},
+});
+```
+
+## TanStack Table
+
+CallApi works seamlessly with TanStack Table for server-side pagination, sorting, and filtering:
+
+### Basic Server-Side Table
+
+```tsx title="components/UsersTable.tsx"
+import { useQuery } from "@tanstack/react-query";
+import {
+	useReactTable,
+	getCoreRowModel,
+	flexRender,
+	type ColumnDef,
+	type PaginationState,
+} from "@tanstack/react-table";
+import { queryClient } from "@/lib/api-client";
+import { useState } from "react";
+import { z } from "zod";
+
+type User = {
+	id: number;
+	name: string;
+	email: string;
+};
+
+const usersResponseSchema = z.object({
+	data: z.array(
+		z.object({
+			id: z.number(),
+			name: z.string(),
+			email: z.string(),
+		})
+	),
+	total: z.number(),
+	page: z.number(),
+	pageSize: z.number(),
+});
+
+const columns: ColumnDef<User>[] = [
+	{ accessorKey: "id", header: "ID" },
+	{ accessorKey: "name", header: "Name" },
+	{ accessorKey: "email", header: "Email" },
+];
+
+export function UsersTable() {
+	const [pagination, setPagination] = useState<PaginationState>({
+		pageIndex: 0,
+		pageSize: 10,
+	});
+
+	const { data, isLoading } = useQuery({
+		queryKey: ["users", pagination],
+		queryFn: () =>
+			queryClient("/users", {
+				query: {
+					page: pagination.pageIndex + 1,
+					limit: pagination.pageSize,
+				},
+				schema: { data: usersResponseSchema },
+			}),
+	});
+
+	const table = useReactTable({
+		data: data?.data ?? [],
+		columns,
+		pageCount: data ? Math.ceil(data.total / data.pageSize) : 0,
+		state: { pagination },
+		onPaginationChange: setPagination,
+		getCoreRowModel: getCoreRowModel(),
+		manualPagination: true,
+	});
+
+	if (isLoading) return <div>Loading...</div>;
+
+	return (
+		<div>
+			<table>
+				<thead>
+					{table.getHeaderGroups().map((headerGroup) => (
+						<tr key={headerGroup.id}>
+							{headerGroup.headers.map((header) => (
+								<th key={header.id}>
+									{flexRender(header.column.columnDef.header, header.getContext())}
+								</th>
+							))}
+						</tr>
+					))}
+				</thead>
+				<tbody>
+					{table.getRowModel().rows.map((row) => (
+						<tr key={row.id}>
+							{row.getVisibleCells().map((cell) => (
+								<td key={cell.id}>{flexRender(cell.column.columnDef.cell, cell.getContext())}</td>
+							))}
+						</tr>
+					))}
+				</tbody>
+			</table>
+			<div>
+				<button onClick={() => table.previousPage()} disabled={!table.getCanPreviousPage()}>
+					Previous
+				</button>
+				<span>
+					Page {table.getState().pagination.pageIndex + 1} of {table.getPageCount()}
+				</span>
+				<button onClick={() => table.nextPage()} disabled={!table.getCanNextPage()}>
+					Next
+				</button>
+			</div>
+		</div>
+	);
+}
+```
+
+### Advanced: Sorting and Filtering
+
+```tsx title="components/AdvancedTable.tsx"
+import { useQuery } from "@tanstack/react-query";
+import {
+	useReactTable,
+	getCoreRowModel,
+	flexRender,
+	type ColumnDef,
+	type SortingState,
+	type ColumnFiltersState,
+} from "@tanstack/react-table";
+import { queryClient } from "@/lib/api-client";
+import { useState } from "react";
+
+type User = {
+	id: number;
+	name: string;
+	email: string;
+	status: "active" | "inactive";
+};
+
+const columns: ColumnDef<User>[] = [
+	{ accessorKey: "id", header: "ID" },
+	{ accessorKey: "name", header: "Name", enableSorting: true },
+	{ accessorKey: "email", header: "Email" },
+	{ accessorKey: "status", header: "Status", enableColumnFilter: true },
+];
+
+export function AdvancedTable() {
+	const [sorting, setSorting] = useState<SortingState>([]);
+	const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([]);
+
+	const { data, isLoading } = useQuery({
+		queryKey: ["users", sorting, columnFilters],
+		queryFn: () => {
+			const params: Record<string, string | number> = {};
+
+			// Add sorting params
+			if (sorting.length > 0) {
+				const sort = sorting[0];
+				params.sortBy = sort.id;
+				params.sortOrder = sort.desc ? "desc" : "asc";
+			}
+
+			// Add filter params
+			columnFilters.forEach((filter) => {
+				params[filter.id] = filter.value as string;
+			});
+
+			return queryClient<{ data: User[]; total: number }, false>("/users", {
+				query: params,
+			});
+		},
+	});
+
+	const table = useReactTable({
+		data: data?.data ?? [],
+		columns,
+		state: { sorting, columnFilters },
+		onSortingChange: setSorting,
+		onColumnFiltersChange: setColumnFilters,
+		getCoreRowModel: getCoreRowModel(),
+		manualSorting: true,
+		manualFiltering: true,
+	});
+
+	if (isLoading) return <div>Loading...</div>;
+
+	return <>{/* Table rendering similar to above */}</>;
+}
+```
+
+## Best Practices
+
+### 1. Centralized API Configuration
+
+Create separate clients for different purposes:
+
+```ts title="lib/api-clients.ts"
+import { createFetchClient } from "@zayne-labs/callapi";
+
+// For TanStack Query - throws errors
+export const queryClient = createFetchClient({
+	baseURL: import.meta.env.VITE_API_URL,
+	throwOnError: true,
+	resultMode: "onlyData",
+	retryAttempts: 2,
+});
+
+// For router loaders - returns error objects
+export const loaderClient = createFetchClient({
+	baseURL: import.meta.env.VITE_API_URL,
+	throwOnError: false,
+	retryAttempts: 1,
+});
+
+// For background tasks - no retries
+export const backgroundClient = createFetchClient({
+	baseURL: import.meta.env.VITE_API_URL,
+	throwOnError: false,
+	retryAttempts: 0,
+});
+```
+
+### 2. Shared Query Options
+
+Define reusable query options:
+
+```ts title="lib/query-options.ts"
+import { queryClient } from "./api-clients";
+import { z } from "zod";
+
+const userSchema = z.object({
+	id: z.number(),
+	name: z.string(),
+	email: z.string(),
+});
+
+export const userQueries = {
+	all: () => ({
+		queryKey: ["users"],
+		queryFn: () => queryClient("/users", { schema: { data: z.array(userSchema) } }),
+	}),
+	byId: (id: number) => ({
+		queryKey: ["users", id],
+		queryFn: () => queryClient("/users/:id", { params: { id }, schema: { data: userSchema } }),
+	}),
+};
+```
+
+### 3. Type-Safe API Layer
+
+Create a typed API layer:
+
+```ts title="api/index.ts"
+import { queryClient } from "@/lib/api-clients";
+import { z } from "zod";
+
+// Schemas
+const schemas = {
+	user: z.object({
+		id: z.number(),
+		name: z.string(),
+		email: z.string(),
+	}),
+	todo: z.object({
+		id: z.number(),
+		title: z.string(),
+		completed: z.boolean(),
+	}),
+};
+
+// API methods
+export const api = {
+	users: {
+		list: () => queryClient("/users", { schema: { data: z.array(schemas.user) } }),
+		get: (id: number) => queryClient("/users/:id", { params: { id }, schema: { data: schemas.user } }),
+		create: (data: { name: string; email: string }) =>
+			queryClient("@post/users", { body: data, schema: { data: schemas.user } }),
+	},
+	todos: {
+		list: () => queryClient("/todos", { schema: { data: z.array(schemas.todo) } }),
+		get: (id: number) => queryClient("/todos/:id", { params: { id }, schema: { data: schemas.todo } }),
+	},
+};
+```
+
+### 4. Error Boundaries
+
+Use error boundaries with TanStack Router:
+
+```tsx title="routes/__root.tsx"
+import { createRootRoute, Outlet } from "@tanstack/react-router";
+import { isHTTPErrorInstance } from "@zayne-labs/callapi/utils";
+
+export const Route = createRootRoute({
+	component: Root,
+	errorComponent: ({ error }) => {
+		if (isHTTPErrorInstance(error)) {
+			return (
+				<div>
+					<h1>HTTP Error {error.response?.status}</h1>
+					<p>{error.message}</p>
+				</div>
+			);
+		}
+		return <div>An unexpected error occurred: {String(error)}</div>;
+	},
+});
+
+function Root() {
+	return <Outlet />;
+}
+```
+
+## Summary
+
+CallApi provides consistent patterns across the entire TanStack ecosystem:
+
+- **TanStack Query**: Configure with `throwOnError: true` and `resultMode: "onlyData"`
+- **TanStack Router**: Use in loaders with full TypeScript support
+- **TanStack Table**: Perfect for server-side pagination, sorting, and filtering
+- **All Frameworks**: Same patterns work in React, Vue, Svelte, and Solid
+
+The combination provides:
+- Type-safe API calls
+- Automatic retries and error handling
+- Request deduplication
+- Schema validation
+- Excellent developer experience

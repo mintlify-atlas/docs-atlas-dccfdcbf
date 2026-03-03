@@ -1,0 +1,488 @@
+---
+title: 'Response Parsing'
+description: 'Smart response parsing with automatic content-type detection and custom parsers'
+---
+
+## Overview
+
+CallApi automatically detects and parses response bodies based on the `Content-Type` header. It supports JSON, text, and binary data with customizable parsing logic.
+
+## Response Types
+
+<ParamField path="responseType" type="'json' | 'text' | 'blob' | 'arrayBuffer' | 'formData' | 'stream'">
+  Specifies how to parse the response body. If not provided, CallApi auto-detects based on `Content-Type` header.
+</ParamField>
+
+```typescript result.ts
+export type ResponseType = "blob" | "json" | "text";
+
+export type ResponseTypeMap<TData> = {
+  json: TData;
+  text: string;
+  blob: Blob;
+  arrayBuffer: ArrayBuffer;
+  formData: FormData;
+  stream: ReadableStream<Uint8Array> | null;
+};
+```
+
+## Automatic Detection
+
+CallApi automatically determines the response type from the `Content-Type` header:
+
+```typescript result.ts
+const JSON_REGEX = /^application\/(?:[\w!#$%&*.^`~-]*\+)?json(;.+)?$/i;
+
+const textTypes = new Set([
+  "image/svg",
+  "application/xml",
+  "application/xhtml",
+  "application/html"
+]);
+
+const detectResponseType = (response: Response): ResponseType => {
+  const initContentType = response.headers.get("content-type");
+  
+  if (!initContentType) {
+    return "json"; // Default
+  }
+  
+  const contentType = initContentType.split(";")[0] ?? "";
+  
+  if (JSON_REGEX.test(contentType)) {
+    return "json";
+  }
+  
+  if (textTypes.has(contentType) || contentType.startsWith("text/")) {
+    return "text";
+  }
+  
+  return "blob";
+};
+```
+
+**Detected types:**
+- `application/json` → `json`
+- `application/vnd.api+json` → `json`
+- `text/*` → `text`
+- `image/svg` → `text`
+- `application/xml` → `text`
+- Everything else → `blob`
+
+## JSON Parsing
+
+### Default JSON Parser
+
+```typescript
+// Automatic JSON parsing
+const { data } = await callApi<{ id: number; name: string }>("/api/user");
+// Response: { "id": 1, "name": "John" }
+// data is typed as { id: number; name: string }
+
+// Explicit JSON type
+const { data } = await callApi("/api/data", {
+  responseType: "json"
+});
+```
+
+### Custom JSON Parser
+
+<ParamField path="responseParser" type="(text: string) => Promise<TData> | TData">
+  Custom parser function for JSON responses. Receives response text and returns parsed data.
+</ParamField>
+
+```typescript result.ts
+export type ResponseParser<TData> = (text: string) => Awaitable<TData>;
+```
+
+**Use cases:**
+
+**1. Custom deserialization (e.g., superjson):**
+```typescript
+import superjson from "superjson";
+
+const { data } = await callApi<{ date: Date }>("/api/event", {
+  responseParser: (text) => superjson.parse(text)
+});
+// Properly deserializes Date objects
+console.log(data.date instanceof Date); // true
+```
+
+**2. Response transformation:**
+```typescript
+const { data } = await callApi("/api/data", {
+  responseParser: (text) => {
+    const parsed = JSON.parse(text);
+    // Transform snake_case to camelCase
+    return {
+      userId: parsed.user_id,
+      firstName: parsed.first_name,
+      lastName: parsed.last_name
+    };
+  }
+});
+```
+
+**3. Handling non-standard JSON:**
+```typescript
+import JSON5 from "json5";
+
+const { data } = await callApi("/api/config", {
+  responseParser: (text) => JSON5.parse(text)
+});
+// Parses JSON with comments, trailing commas, etc.
+```
+
+**4. Global custom parser:**
+```typescript
+import superjson from "superjson";
+
+const client = createFetchClient({
+  baseURL: "https://api.example.com",
+  responseParser: (text) => superjson.parse(text)
+});
+
+// All responses use superjson
+const { data } = await client("/api/event");
+```
+
+## Text Parsing
+
+```typescript
+const { data } = await callApi("/api/readme", {
+  responseType: "text"
+});
+// data is string
+
+// Auto-detected for text/plain
+const { data } = await callApi("/api/log");
+// Response Content-Type: text/plain
+// data is string
+```
+
+## Binary Data
+
+### Blob
+
+```typescript
+// Download file as Blob
+const { data } = await callApi("/api/download", {
+  responseType: "blob"
+});
+
+// Create download link
+const url = URL.createObjectURL(data);
+const a = document.createElement("a");
+a.href = url;
+a.download = "file.pdf";
+a.click();
+URL.revokeObjectURL(url);
+
+// Read as text
+const text = await data.text();
+
+// Read as ArrayBuffer
+const buffer = await data.arrayBuffer();
+```
+
+### ArrayBuffer
+
+```typescript
+const { data } = await callApi("/api/binary", {
+  responseType: "arrayBuffer"
+});
+
+// data is ArrayBuffer
+const view = new Uint8Array(data);
+console.log(view[0]);
+```
+
+### Stream
+
+```typescript
+const { data } = await callApi("/api/large-file", {
+  responseType: "stream"
+});
+
+// data is ReadableStream<Uint8Array>
+if (data) {
+  const reader = data.getReader();
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    console.log("Received chunk:", value);
+  }
+}
+```
+
+### FormData
+
+```typescript
+const { data } = await callApi("/api/form", {
+  responseType: "formData"
+});
+
+// data is FormData
+const name = data.get("name");
+const file = data.get("file") as File;
+```
+
+## Result Modes
+
+Control what data is returned from the API call:
+
+<ParamField path="resultMode" type="'all' | 'onlyData' | 'onlyResponse' | 'withoutResponse' | 'fetchApi'" default="all">
+  Determines the shape of the returned result object.
+</ParamField>
+
+```typescript result.ts
+export type ResultModeMap<TData, TErrorData> = {
+  all: { data: TData; error: null; response: Response } | ErrorVariant;
+  onlyData: TData;
+  onlyResponse: Response;
+  withoutResponse: { data: TData; error: null } | Omit<ErrorVariant, "response">;
+  fetchApi: Response;
+};
+```
+
+### all (default)
+
+```typescript
+const result = await callApi("/api/user");
+
+if (result.error) {
+  console.error(result.error.message);
+  console.log(result.response?.status);
+} else {
+  console.log(result.data);
+  console.log(result.response.headers);
+}
+```
+
+### onlyData
+
+```typescript
+const data = await callApi<User>("/api/user", {
+  resultMode: "onlyData",
+  throwOnError: true // Required with onlyData
+});
+// data is User
+console.log(data.name);
+```
+
+### onlyResponse
+
+```typescript
+const response = await callApi("/api/user", {
+  resultMode: "onlyResponse"
+});
+// response is Response
+console.log(response.status);
+console.log(response.headers.get("content-type"));
+
+const data = await response.json();
+```
+
+### withoutResponse
+
+```typescript
+const result = await callApi("/api/user", {
+  resultMode: "withoutResponse"
+});
+
+if (result.error) {
+  console.error(result.error.message);
+  // result.response is not available
+} else {
+  console.log(result.data);
+  // result.response is not available
+}
+```
+
+### fetchApi
+
+```typescript
+// Returns raw Response object
+const response = await callApi("/api/user", {
+  resultMode: "fetchApi"
+});
+
+// Identical to native fetch
+if (response.ok) {
+  const data = await response.json();
+} else {
+  console.error("Failed:", response.statusText);
+}
+```
+
+## Response Parsing Flow
+
+From the source code:
+
+```typescript result.ts
+export const resolveResponseData = async (options: {
+  response: Response;
+  responseParser: ResponseParser<unknown>;
+  responseType: ResponseType | null;
+  resultMode: ResultModeType;
+}) => {
+  const { response, responseParser, responseType, resultMode } = options;
+  
+  // Skip parsing for fetchApi mode
+  if (resultMode === "fetchApi") {
+    return null;
+  }
+  
+  const selectedParser = responseParser ?? JSON.parse;
+  const selectedResponseType = responseType ?? detectResponseType(response);
+  
+  const RESPONSE_TYPE_LOOKUP = {
+    json: async () => {
+      const text = await response.text();
+      return selectedParser(text);
+    },
+    text: () => response.text(),
+    blob: () => response.blob(),
+    arrayBuffer: () => response.arrayBuffer(),
+    formData: () => response.formData(),
+    stream: () => response.body
+  };
+  
+  if (!Object.hasOwn(RESPONSE_TYPE_LOOKUP, selectedResponseType)) {
+    throw new Error(`Invalid response type: ${selectedResponseType}`);
+  }
+  
+  return RESPONSE_TYPE_LOOKUP[selectedResponseType]();
+};
+```
+
+## Advanced Examples
+
+### Handling Different Content Types
+
+```typescript
+const { data, response } = await callApi("/api/resource");
+
+const contentType = response.headers.get("content-type");
+
+if (contentType?.includes("application/json")) {
+  console.log("JSON data:", data);
+} else if (contentType?.includes("text/")) {
+  console.log("Text data:", data);
+} else {
+  console.log("Binary data:", data);
+}
+```
+
+### Download with Progress
+
+```typescript
+const { data } = await callApi("/api/large-file", {
+  responseType: "stream"
+});
+
+if (!data) throw new Error("No stream available");
+
+const contentLength = parseInt(
+  response.headers.get("content-length") ?? "0"
+);
+
+let receivedLength = 0;
+const chunks: Uint8Array[] = [];
+
+const reader = data.getReader();
+
+while (true) {
+  const { done, value } = await reader.read();
+  
+  if (done) break;
+  
+  chunks.push(value);
+  receivedLength += value.length;
+  
+  const progress = (receivedLength / contentLength) * 100;
+  console.log(`Progress: ${progress.toFixed(2)}%`);
+}
+
+const blob = new Blob(chunks);
+```
+
+### Parse and Transform
+
+```typescript
+type ApiResponse<T> = {
+  success: boolean;
+  data: T;
+  meta: { timestamp: string };
+};
+
+const { data } = await callApi<User>("/api/user", {
+  responseParser: (text) => {
+    const response: ApiResponse<User> = JSON.parse(text);
+    return response.data; // Extract nested data
+  }
+});
+// data is User, not ApiResponse<User>
+```
+
+### Clone Response for Multiple Reads
+
+```typescript
+const { data, response } = await callApi("/api/data", {
+  cloneResponse: true // Clone response before reading
+});
+
+// Can read response body again
+const text = await response.text();
+const blob = await response.blob(); // Works because response was cloned
+```
+
+## Best Practices
+
+<Tip>
+**Let Auto-Detection Work**: Unless you have specific needs, let CallApi auto-detect the response type:
+
+```typescript
+// Good - auto-detects based on Content-Type
+const { data } = await callApi("/api/data");
+
+// Only specify when necessary
+const { data } = await callApi("/api/data", {
+  responseType: "text" // Override auto-detection
+});
+```
+</Tip>
+
+<Warning>
+**Response Body Can Only Be Read Once**: Unless you clone the response, you can only read the body once:
+
+```typescript
+// Bad - will throw error
+const { data, response } = await callApi("/api/data");
+const text = await response.text(); // Error: body already read
+
+// Good - clone response first
+const { data, response } = await callApi("/api/data", {
+  cloneResponse: true
+});
+const text = await response.text(); // Works
+```
+</Warning>
+
+<Note>
+**Custom Parsers for Special Formats**: Use custom parsers for non-standard JSON or special deserialization needs:
+
+```typescript
+import superjson from "superjson";
+
+const client = createFetchClient({
+  responseParser: (text) => superjson.parse(text)
+});
+```
+</Note>
+
+## Related
+
+- [Error Handling](/features/error-handling) - Handle parsing errors
+- [Type Safety](/advanced/typescript) - Type-safe response data
+- [Quick Start](/quickstart) - Basic usage examples

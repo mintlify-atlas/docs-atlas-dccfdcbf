@@ -1,0 +1,663 @@
+---
+title: Installation
+description: Install CallApi in your project using npm, yarn, pnpm, bun, or CDN
+---
+
+## Package Managers
+
+CallApi is available on npm and can be installed using any modern package manager.
+
+<CodeGroup>
+
+```bash npm
+npm install @zayne-labs/callapi
+```
+
+```bash yarn
+yarn add @zayne-labs/callapi
+```
+
+```bash pnpm
+pnpm add @zayne-labs/callapi
+```
+
+```bash bun
+bun add @zayne-labs/callapi
+```
+
+</CodeGroup>
+
+## Package Information
+
+<CardGroup cols={2}>
+  <Card title="Package Name" icon="box">
+    `@zayne-labs/callapi`
+  </Card>
+  <Card title="Bundle Size" icon="weight-scale">
+    Under 6KB gzipped
+  </Card>
+  <Card title="Dependencies" icon="cubes">
+    Zero dependencies
+  </Card>
+  <Card title="License" icon="scale-balanced">
+    MIT License
+  </Card>
+</CardGroup>
+
+## CDN Usage
+
+For quick prototyping or simple projects, you can use CallApi directly from a CDN:
+
+<Tabs>
+  <Tab title="ESM.run">
+
+```html
+<script type="module">
+  import { callApi, createFetchClient } from "https://esm.run/@zayne-labs/callapi";
+  
+  const { data } = await callApi("/api/users");
+  console.log(data);
+</script>
+```
+
+  </Tab>
+  <Tab title="unpkg">
+
+```html
+<script type="module">
+  import { callApi, createFetchClient } from "https://unpkg.com/@zayne-labs/callapi";
+  
+  const { data } = await callApi("/api/users");
+  console.log(data);
+</script>
+```
+
+  </Tab>
+  <Tab title="jsDelivr">
+
+```html
+<script type="module">
+  import { callApi, createFetchClient } from "https://cdn.jsdelivr.net/npm/@zayne-labs/callapi";
+  
+  const { data } = await callApi("/api/users");
+  console.log(data);
+</script>
+```
+
+  </Tab>
+</Tabs>
+
+<Warning>
+  CDN usage is great for prototyping but not recommended for production. Use a package manager for better performance and reliability.
+</Warning>
+
+## Runtime Requirements
+
+CallApi requires a JavaScript runtime with native Fetch API support:
+
+<Steps>
+
+<Step title="Browsers">
+
+All modern browsers support the Fetch API:
+
+- Chrome 42+
+- Firefox 39+
+- Safari 10.1+
+- Edge 14+
+
+<Note>
+  Internet Explorer is not supported. Use a polyfill if you need to support older browsers.
+</Note>
+
+</Step>
+
+<Step title="Node.js">
+
+Node.js 18.0.0 or higher is required:
+
+```bash
+node --version
+# v18.0.0 or higher
+```
+
+Node.js 18+ includes native fetch support. For older versions, consider upgrading or using a polyfill like `node-fetch`.
+
+</Step>
+
+<Step title="Deno">
+
+Deno has native fetch support:
+
+```typescript
+import { callApi } from "npm:@zayne-labs/callapi";
+
+const { data } = await callApi("/api/users");
+```
+
+</Step>
+
+<Step title="Bun">
+
+Bun has native fetch support:
+
+```bash
+bun add @zayne-labs/callapi
+```
+
+```javascript
+import { callApi } from "@zayne-labs/callapi";
+
+const { data } = await callApi("/api/users");
+```
+
+</Step>
+
+<Step title="Edge Runtimes">
+
+CallApi works in all edge runtimes:
+
+- Cloudflare Workers
+- Vercel Edge Functions
+- Deno Deploy
+- Netlify Edge Functions
+- And any other environment with native fetch
+
+</Step>
+
+</Steps>
+
+## Imports
+
+CallApi provides multiple entry points for tree-shaking optimization:
+
+### Main Package
+
+The primary exports for making requests:
+
+```javascript
+import {
+  callApi,
+  createFetchClient,
+  createFetchClientWithContext,
+} from "@zayne-labs/callapi";
+```
+
+### Utils
+
+Helper functions for defining schemas, plugins, and configs:
+
+```javascript
+import {
+  defineSchema,
+  defineSchemaRoutes,
+  defineMainSchema,
+  defineSchemaConfig,
+  definePlugin,
+  defineBaseConfig,
+  defineInstanceConfig,
+  HTTPError,
+  ValidationError,
+} from "@zayne-labs/callapi/utils";
+```
+
+### Constants
+
+Useful constants for configuration:
+
+```javascript
+import {
+  HTTP_METHODS,
+  STATUS_CODES,
+  RETRY_STATUS_CODES,
+} from "@zayne-labs/callapi/constants";
+```
+
+<Tip>
+  Using specific imports instead of wildcard imports helps with tree-shaking and reduces your bundle size.
+</Tip>
+
+## TypeScript Support
+
+CallApi is written in TypeScript and includes full type definitions out of the box. No need to install `@types` packages.
+
+```typescript
+import { callApi, type CallApiResult } from "@zayne-labs/callapi";
+
+interface User {
+  id: number;
+  name: string;
+  email: string;
+}
+
+const result: CallApiResult<User> = await callApi<User>("/api/users/1");
+
+if (result.data) {
+  // data is typed as User
+  console.log(result.data.name);
+}
+```
+
+### TypeScript Version
+
+CallApi requires TypeScript 5.0 or higher for optimal type inference. Earlier versions may work but are not officially supported.
+
+```json
+{
+  "devDependencies": {
+    "typescript": "^5.0.0"
+  }
+}
+```
+
+## Verification
+
+Verify your installation:
+
+<Steps>
+
+<Step title="Check Installation">
+
+Create a test file to verify CallApi is installed correctly:
+
+```javascript test.js
+import { callApi } from "@zayne-labs/callapi";
+
+const { data, error } = await callApi("https://jsonplaceholder.typicode.com/users/1");
+
+if (error) {
+  console.error("Error:", error.message);
+} else {
+  console.log("Success! User:", data);
+}
+```
+
+</Step>
+
+<Step title="Run the Test">
+
+<CodeGroup>
+
+```bash Node.js
+node test.js
+```
+
+```bash Deno
+deno run --allow-net test.js
+```
+
+```bash Bun
+bun test.js
+```
+
+</CodeGroup>
+
+You should see the user data printed to the console.
+
+</Step>
+
+</Steps>
+
+<Note>
+  If you're using CommonJS (`require`), CallApi is ESM-only. You'll need to use dynamic imports or migrate to ESM.
+</Note>
+
+## Framework Integration
+
+CallApi works seamlessly with all modern JavaScript frameworks:
+
+<Tabs>
+  <Tab title="React">
+
+```javascript
+import { createFetchClient } from "@zayne-labs/callapi";
+import { useState, useEffect } from "react";
+
+// Create client outside component for reuse
+const api = createFetchClient({
+  baseURL: "https://api.example.com",
+});
+
+function UserList() {
+  const [users, setUsers] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const fetchUsers = async () => {
+      const { data, error } = await api("/users");
+      if (data) setUsers(data);
+      setLoading(false);
+    };
+
+    fetchUsers();
+  }, []);
+
+  if (loading) return <div>Loading...</div>;
+  return <ul>{users.map(user => <li key={user.id}>{user.name}</li>)}</ul>;
+}
+```
+
+  </Tab>
+  <Tab title="Vue">
+
+```vue
+<script setup>
+import { createFetchClient } from "@zayne-labs/callapi";
+import { ref, onMounted } from "vue";
+
+const api = createFetchClient({
+  baseURL: "https://api.example.com",
+});
+
+const users = ref([]);
+const loading = ref(true);
+
+onMounted(async () => {
+  const { data } = await api("/users");
+  if (data) users.value = data;
+  loading.value = false;
+});
+</script>
+
+<template>
+  <div v-if="loading">Loading...</div>
+  <ul v-else>
+    <li v-for="user in users" :key="user.id">{{ user.name }}</li>
+  </ul>
+</template>
+```
+
+  </Tab>
+  <Tab title="Svelte">
+
+```svelte
+<script>
+import { createFetchClient } from "@zayne-labs/callapi";
+import { onMount } from "svelte";
+
+const api = createFetchClient({
+  baseURL: "https://api.example.com",
+});
+
+let users = [];
+let loading = true;
+
+onMount(async () => {
+  const { data } = await api("/users");
+  if (data) users = data;
+  loading = false;
+});
+</script>
+
+{#if loading}
+  <div>Loading...</div>
+{:else}
+  <ul>
+    {#each users as user (user.id)}
+      <li>{user.name}</li>
+    {/each}
+  </ul>
+{/if}
+```
+
+  </Tab>
+  <Tab title="Next.js">
+
+```javascript app/api/client.js
+import { createFetchClient } from "@zayne-labs/callapi";
+
+export const api = createFetchClient({
+  baseURL: process.env.NEXT_PUBLIC_API_URL,
+});
+```
+
+```javascript app/users/page.js
+import { api } from "../api/client";
+
+export default async function UsersPage() {
+  const { data: users } = await api("/users");
+  
+  return (
+    <ul>
+      {users?.map(user => (
+        <li key={user.id}>{user.name}</li>
+      ))}
+    </ul>
+  );
+}
+```
+
+  </Tab>
+</Tabs>
+
+## Build Tools
+
+CallApi works with all modern build tools:
+
+<Tabs>
+  <Tab title="Vite">
+
+No configuration needed! CallApi works out of the box with Vite:
+
+```javascript vite.config.js
+import { defineConfig } from "vite";
+
+export default defineConfig({
+  // No special config needed for CallApi
+});
+```
+
+  </Tab>
+  <Tab title="Webpack">
+
+CallApi works with Webpack 5+ without additional configuration:
+
+```javascript webpack.config.js
+module.exports = {
+  // No special config needed for CallApi
+};
+```
+
+  </Tab>
+  <Tab title="Rollup">
+
+Use with `@rollup/plugin-node-resolve`:
+
+```javascript rollup.config.js
+import resolve from "@rollup/plugin-node-resolve";
+
+export default {
+  plugins: [resolve()],
+};
+```
+
+  </Tab>
+  <Tab title="esbuild">
+
+CallApi works directly with esbuild:
+
+```bash
+esbuild src/index.js --bundle --outfile=dist/bundle.js
+```
+
+  </Tab>
+</Tabs>
+
+## Optional: Validation Libraries
+
+To use schema validation, install one of these libraries:
+
+<Tabs>
+  <Tab title="Zod">
+
+```bash npm
+npm install zod
+```
+
+```javascript
+import { z } from "zod";
+import { createFetchClient } from "@zayne-labs/callapi";
+import { defineSchema } from "@zayne-labs/callapi/utils";
+
+const userSchema = z.object({
+  id: z.number(),
+  name: z.string(),
+});
+
+const api = createFetchClient({
+  schema: defineSchema({
+    "/users/:id": { data: userSchema },
+  }),
+});
+```
+
+  </Tab>
+  <Tab title="Valibot">
+
+```bash npm
+npm install valibot
+```
+
+```javascript
+import * as v from "valibot";
+import { createFetchClient } from "@zayne-labs/callapi";
+import { defineSchema } from "@zayne-labs/callapi/utils";
+
+const userSchema = v.object({
+  id: v.number(),
+  name: v.string(),
+});
+
+const api = createFetchClient({
+  schema: defineSchema({
+    "/users/:id": { data: userSchema },
+  }),
+});
+```
+
+  </Tab>
+  <Tab title="Yup">
+
+```bash npm
+npm install yup
+```
+
+```javascript
+import * as yup from "yup";
+import { createFetchClient } from "@zayne-labs/callapi";
+import { defineSchema } from "@zayne-labs/callapi/utils";
+
+const userSchema = yup.object({
+  id: yup.number().required(),
+  name: yup.string().required(),
+});
+
+const api = createFetchClient({
+  schema: defineSchema({
+    "/users/:id": { data: userSchema },
+  }),
+});
+```
+
+  </Tab>
+</Tabs>
+
+<Note>
+  CallApi supports any validation library that implements the [Standard Schema](https://standardschema.dev/) specification.
+</Note>
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Module not found error">
+    
+If you see `Cannot find module '@zayne-labs/callapi'`, make sure:
+
+1. You've installed the package: `npm install @zayne-labs/callapi`
+2. Your `node_modules` folder exists
+3. You're using the correct import path
+
+Try reinstalling:
+
+```bash
+rm -rf node_modules package-lock.json
+npm install
+```
+
+  </Accordion>
+  
+  <Accordion title="TypeScript errors">
+    
+If you're seeing TypeScript errors:
+
+1. Ensure you're using TypeScript 5.0+
+2. Check your `tsconfig.json` has `"moduleResolution": "bundler"` or `"node16"`
+3. Make sure `"esModuleInterop": true` is set
+
+```json tsconfig.json
+{
+  "compilerOptions": {
+    "moduleResolution": "bundler",
+    "esModuleInterop": true,
+    "target": "ES2022"
+  }
+}
+```
+
+  </Accordion>
+  
+  <Accordion title="CommonJS / require() errors">
+    
+CallApi is ESM-only. If you need to use it with CommonJS:
+
+1. Use dynamic imports:
+
+```javascript
+const { callApi } = await import("@zayne-labs/callapi");
+```
+
+2. Or migrate your project to ESM by adding `"type": "module"` to your `package.json`:
+
+```json package.json
+{
+  "type": "module"
+}
+```
+
+  </Accordion>
+  
+  <Accordion title="fetch is not defined (Node.js)">
+    
+If you see `fetch is not defined`, you're using Node.js version < 18.
+
+Solution:
+
+1. Upgrade to Node.js 18+ (recommended)
+2. Or use a polyfill like `node-fetch`:
+
+```javascript
+import fetch from "node-fetch";
+globalThis.fetch = fetch;
+
+import { callApi } from "@zayne-labs/callapi";
+```
+
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Quick Start" icon="rocket" href="/quickstart">
+    Make your first request in 5 minutes
+  </Card>
+  <Card title="API Reference" icon="book" href="/api/call-api">
+    Explore all configuration options
+  </Card>
+  <Card title="Core Features" icon="star" href="/features/error-handling">
+    Discover CallApi's powerful features
+  </Card>
+  <Card title="Advanced" icon="code" href="/advanced/schema-validation">
+    Learn about type safety features
+  </Card>
+</CardGroup>

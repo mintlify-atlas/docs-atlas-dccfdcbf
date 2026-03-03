@@ -1,0 +1,458 @@
+---
+title: 'Retries & Timeout'
+description: 'Configure automatic retry strategies and timeout behavior for failed requests'
+---
+
+## Overview
+
+CallApi includes built-in retry logic with configurable strategies, delays, and conditions. Automatically retry failed requests due to network issues, rate limits, or server errors.
+
+## Quick Start
+
+```typescript
+import { callApi } from "@zayne-labs/callapi";
+
+// Basic retry configuration
+const { data, error } = await callApi("/api/data", {
+  retryAttempts: 3,
+  retryDelay: 1000, // 1 second between retries
+  retryStrategy: "exponential"
+});
+```
+
+## Retry Options
+
+### retryAttempts
+
+<ParamField path="retryAttempts" type="number" default={0}>
+  Number of retry attempts before giving up. Set to `0` to disable retries.
+</ParamField>
+
+```typescript retry.ts
+interface RetryOptions<TErrorData> {
+  retryAttempts?: number;
+}
+```
+
+```typescript
+// Retry up to 3 times
+const result = await callApi("/api/flaky-endpoint", {
+  retryAttempts: 3
+});
+
+// No retries (default)
+const result = await callApi("/api/endpoint", {
+  retryAttempts: 0
+});
+```
+
+### retryDelay
+
+<ParamField path="retryDelay" type="number | (attemptCount: number) => number" default={1000}>
+  Delay between retry attempts in milliseconds. Can be a static number or a function for dynamic delays.
+</ParamField>
+
+```typescript retry.ts
+interface RetryOptions<TErrorData> {
+  retryDelay?: number | ((currentAttemptCount: number) => number);
+}
+```
+
+**Static delay:**
+```typescript
+const result = await callApi("/api/data", {
+  retryAttempts: 3,
+  retryDelay: 2000 // 2 seconds between each retry
+});
+```
+
+**Dynamic delay:**
+```typescript
+const result = await callApi("/api/data", {
+  retryAttempts: 5,
+  retryDelay: (attemptCount) => {
+    // Increase delay with each attempt
+    return attemptCount * 1000; // 1s, 2s, 3s, 4s, 5s
+  }
+});
+```
+
+### retryStrategy
+
+<ParamField path="retryStrategy" type="'linear' | 'exponential'" default="linear">
+  Strategy for calculating retry delays. Linear uses constant delays, exponential increases delay exponentially.
+</ParamField>
+
+```typescript retry.ts
+interface RetryOptions<TErrorData> {
+  retryStrategy?: "exponential" | "linear";
+}
+```
+
+**Linear strategy:**
+```typescript
+const result = await callApi("/api/data", {
+  retryAttempts: 3,
+  retryDelay: 1000,
+  retryStrategy: "linear"
+});
+// Delays: 1s, 1s, 1s
+```
+
+**Exponential strategy:**
+```typescript
+const result = await callApi("/api/data", {
+  retryAttempts: 4,
+  retryDelay: 1000,
+  retryStrategy: "exponential"
+});
+// Delays: 1s, 2s, 4s, 8s (retryDelay * 2^attemptCount)
+```
+
+### retryMaxDelay
+
+<ParamField path="retryMaxDelay" type="number" default={10000}>
+  Maximum delay in milliseconds for exponential strategy. Prevents delays from growing indefinitely.
+</ParamField>
+
+```typescript retry.ts
+interface RetryOptions<TErrorData> {
+  retryMaxDelay?: number;
+}
+```
+
+```typescript
+const result = await callApi("/api/data", {
+  retryAttempts: 10,
+  retryDelay: 1000,
+  retryStrategy: "exponential",
+  retryMaxDelay: 5000 // Cap at 5 seconds
+});
+// Delays: 1s, 2s, 4s, 5s, 5s, 5s, 5s, 5s, 5s, 5s
+```
+
+### retryStatusCodes
+
+<ParamField path="retryStatusCodes" type="number[]">
+  HTTP status codes that should trigger a retry. If not specified, all error status codes are eligible for retry (subject to other conditions).
+</ParamField>
+
+```typescript retry.ts
+interface RetryOptions<TErrorData> {
+  retryStatusCodes?: RetryStatusCodes[];
+}
+
+type RetryStatusCodes = number | 408 | 409 | 425 | 429 | 500 | 502 | 503 | 504;
+```
+
+**Default retryable status codes:**
+- `408` Request Timeout
+- `409` Conflict
+- `425` Too Early
+- `429` Too Many Requests
+- `500` Internal Server Error
+- `502` Bad Gateway
+- `503` Service Unavailable
+- `504` Gateway Timeout
+
+```typescript
+// Retry only on rate limits and server errors
+const result = await callApi("/api/data", {
+  retryAttempts: 3,
+  retryStatusCodes: [429, 500, 502, 503]
+});
+
+// Retry on any 5xx error
+const result = await callApi("/api/data", {
+  retryAttempts: 3,
+  retryStatusCodes: [500, 501, 502, 503, 504, 505]
+});
+```
+
+### retryMethods
+
+<ParamField path="retryMethods" type="string[]" default={["GET", "POST"]}>
+  HTTP methods that are allowed to retry. By default, only GET and POST requests are retried.
+</ParamField>
+
+```typescript retry.ts
+interface RetryOptions<TErrorData> {
+  retryMethods?: MethodUnion[];
+}
+```
+
+```typescript
+// Allow retries for all methods
+const result = await callApi("/api/data", {
+  method: "PUT",
+  retryAttempts: 3,
+  retryMethods: ["GET", "POST", "PUT", "PATCH", "DELETE"]
+});
+
+// Only retry GET requests
+const result = await callApi("/api/data", {
+  retryAttempts: 3,
+  retryMethods: ["GET"]
+});
+```
+
+### retryCondition
+
+<ParamField path="retryCondition" type="(context: ErrorContext) => boolean | Promise<boolean>">
+  Custom function to determine if a request should be retried. Receives error context including the error, response, and request details.
+</ParamField>
+
+```typescript retry.ts
+type RetryCondition<TErrorData> = (
+  context: ErrorContext<{ ErrorData: TErrorData }>
+) => Awaitable<boolean>;
+
+interface RetryOptions<TErrorData> {
+  retryCondition?: RetryCondition<TErrorData>;
+}
+```
+
+```typescript
+// Custom retry logic based on error details
+const result = await callApi("/api/data", {
+  retryAttempts: 3,
+  retryCondition: async (context) => {
+    const { error, response, options } = context;
+    
+    // Don't retry if request was aborted
+    if (error.name === "AbortError") {
+      return false;
+    }
+    
+    // Only retry on network errors or 503
+    if (response) {
+      return response.status === 503;
+    }
+    
+    // Retry on network errors
+    return true;
+  }
+});
+
+// Retry based on error response data
+const result = await callApi<DataType, ErrorType>("/api/data", {
+  retryAttempts: 5,
+  retryCondition: (context) => {
+    // Check if error indicates a temporary issue
+    return context.error.errorData?.retryable === true;
+  }
+});
+```
+
+## Retry Strategy Implementation
+
+From the source code:
+
+```typescript retry.ts
+const getLinearDelay = (currentAttemptCount: number, options: RetryOptions<unknown>) => {
+  const retryDelay = options.retryDelay ?? 1000;
+  const resolveRetryDelay = 
+    isFunction(retryDelay) ? retryDelay(currentAttemptCount) : retryDelay;
+  return resolveRetryDelay;
+};
+
+const getExponentialDelay = (currentAttemptCount: number, options: RetryOptions<unknown>) => {
+  const retryDelay = options.retryDelay ?? 1000;
+  const resolvedRetryDelay = 
+    isFunction(retryDelay) ? retryDelay(currentAttemptCount) : retryDelay;
+  const maxDelay = options.retryMaxDelay ?? 10000;
+  const exponentialDelay = resolvedRetryDelay * 2 ** currentAttemptCount;
+  return Math.min(exponentialDelay, maxDelay);
+};
+```
+
+## Timeout Configuration
+
+Use the native `AbortSignal.timeout()` API for request timeouts:
+
+```typescript
+// Timeout after 5 seconds
+const result = await callApi("/api/data", {
+  signal: AbortSignal.timeout(5000)
+});
+
+if (result.error?.name === "TimeoutError") {
+  console.error("Request timed out");
+}
+```
+
+**Combined with retries:**
+```typescript
+const result = await callApi("/api/data", {
+  signal: AbortSignal.timeout(3000), // 3 second timeout per attempt
+  retryAttempts: 3,
+  retryDelay: 1000,
+  retryCondition: (context) => {
+    // Don't retry on timeout
+    return context.error.name !== "TimeoutError";
+  }
+});
+```
+
+## Advanced Examples
+
+### Exponential Backoff with Jitter
+
+```typescript
+const result = await callApi("/api/data", {
+  retryAttempts: 5,
+  retryStrategy: "exponential",
+  retryDelay: (attemptCount) => {
+    // Add random jitter to prevent thundering herd
+    const baseDelay = 1000 * (2 ** attemptCount);
+    const jitter = Math.random() * 1000;
+    return Math.min(baseDelay + jitter, 10000);
+  },
+  retryMaxDelay: 10000
+});
+```
+
+### Rate Limit Handling
+
+```typescript
+type RateLimitError = {
+  message: string;
+  retryAfter?: number; // Seconds until retry is allowed
+};
+
+const result = await callApi<DataType, RateLimitError>("/api/data", {
+  retryAttempts: 3,
+  retryStatusCodes: [429],
+  retryDelay: (attemptCount) => {
+    // Default delay
+    return 5000;
+  },
+  retryCondition: async (context) => {
+    if (context.response?.status === 429) {
+      const retryAfter = context.response.headers.get("Retry-After");
+      if (retryAfter) {
+        // Use server-provided delay
+        const delayMs = parseInt(retryAfter) * 1000;
+        await new Promise(resolve => setTimeout(resolve, delayMs));
+      }
+      return true;
+    }
+    return false;
+  }
+});
+```
+
+### Conditional Retry Based on Error Type
+
+```typescript
+type ApiError = {
+  code: string;
+  message: string;
+  retryable: boolean;
+};
+
+const result = await callApi<UserData, ApiError>("/api/users", {
+  retryAttempts: 3,
+  retryCondition: (context) => {
+    const { error, response } = context;
+    
+    // Don't retry client errors (4xx) except 429
+    if (response && response.status >= 400 && response.status < 500) {
+      return response.status === 429;
+    }
+    
+    // Check if error is marked as retryable
+    if (error.errorData && typeof error.errorData === 'object') {
+      return error.errorData.retryable === true;
+    }
+    
+    // Retry on network errors
+    return !response;
+  }
+});
+```
+
+### Retry with Progress Callback
+
+```typescript
+const result = await callApi("/api/data", {
+  retryAttempts: 5,
+  retryStrategy: "exponential",
+  onRetry: (context) => {
+    const { retryAttemptCount, error, response } = context;
+    console.log(`Retry attempt ${retryAttemptCount}/5`);
+    console.log(`Reason: ${error.message}`);
+    if (response) {
+      console.log(`Status: ${response.status}`);
+    }
+  }
+});
+```
+
+## Global Retry Configuration
+
+```typescript
+import { createFetchClient } from "@zayne-labs/callapi";
+
+const client = createFetchClient({
+  baseURL: "https://api.example.com",
+  // Global retry defaults
+  retryAttempts: 3,
+  retryDelay: 1000,
+  retryStrategy: "exponential",
+  retryMaxDelay: 10000,
+  retryStatusCodes: [408, 429, 500, 502, 503, 504],
+  retryMethods: ["GET", "POST"]
+});
+
+// Override per request
+const result = await client("/important-data", {
+  retryAttempts: 5, // Override global setting
+  retryStrategy: "linear"
+});
+```
+
+## Best Practices
+
+<Tip>
+**Use Exponential Backoff**: For most scenarios, exponential backoff with a max delay is the best strategy:
+
+```typescript
+{
+  retryStrategy: "exponential",
+  retryDelay: 1000,
+  retryMaxDelay: 10000
+}
+```
+</Tip>
+
+<Warning>
+**Don't Retry Non-Idempotent Operations**: Be careful retrying POST, PUT, or DELETE requests that aren't idempotent:
+
+```typescript
+// Safe to retry
+retryMethods: ["GET"]
+
+// Risky without idempotency
+retryMethods: ["POST", "PUT", "DELETE"]
+```
+</Warning>
+
+<Note>
+**Respect Server Rate Limits**: Use `Retry-After` headers when available:
+
+```typescript
+retryCondition: (context) => {
+  const retryAfter = context.response?.headers.get("Retry-After");
+  if (retryAfter) {
+    // Implement custom delay logic
+  }
+}
+```
+</Note>
+
+## Related
+
+- [Error Handling](/features/error-handling) - Handle errors and retries together
+- [Request Deduplication](/features/request-deduplication) - Combine with deduplication strategies
+- [Hooks](/advanced/hooks) - Use `onRetry` hook for monitoring retry attempts

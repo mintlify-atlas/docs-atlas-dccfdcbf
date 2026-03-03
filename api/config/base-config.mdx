@@ -1,0 +1,237 @@
+---
+title: BaseCallApiConfig
+description: Base configuration interface for creating CallApi client instances
+---
+
+## Overview
+
+The `BaseCallApiConfig` interface defines the configuration options for creating a new CallApi client using `createFetchClient()`. This configuration applies to all requests made by the client and can be either a static object or a dynamic function.
+
+## Type Definition
+
+```typescript
+type BaseCallApiConfig<
+  TBaseCallApiContext extends CallApiContext = DefaultCallApiContext,
+  TBaseData = DefaultDataType,
+  TBaseErrorData = DefaultDataType,
+  TBaseResultMode extends ResultModeType = ResultModeType,
+  TBaseThrowOnError extends ThrowOnErrorBoolean = DefaultThrowOnError,
+  TBaseResponseType extends ResponseTypeType = ResponseTypeType,
+  TBaseSchemaAndConfig extends BaseCallApiSchemaAndConfig = BaseCallApiSchemaAndConfig,
+  TBasePluginArray extends CallApiPlugin[] = DefaultPluginArray,
+> =
+  | (CallApiRequestOptions & BaseCallApiExtraOptions)
+  | ((context: InstanceContext) => CallApiRequestOptions & BaseCallApiExtraOptions)
+```
+
+## Configuration Options
+
+The base configuration combines [request options](/api/config/request-options) and [extra options](/api/config/extra-options), and can be provided in two ways:
+
+### Static Configuration
+
+Provide a configuration object directly:
+
+```typescript
+import { createFetchClient } from 'callapi';
+
+const api = createFetchClient({
+  baseURL: 'https://api.example.com',
+  headers: {
+    'Authorization': 'Bearer token',
+  },
+  timeout: 5000,
+  throwOnError: true,
+});
+```
+
+### Dynamic Configuration
+
+Provide a function that returns configuration based on context:
+
+```typescript
+import { createFetchClient } from 'callapi';
+
+const api = createFetchClient((ctx) => ({
+  baseURL: 'https://api.example.com',
+  headers: {
+    'Content-Type': 'application/json',
+    // Access instance-level headers from context
+    ...ctx.request.headers,
+  },
+  // Conditional configuration based on request
+  timeout: ctx.initURL.includes('/slow/') ? 30000 : 5000,
+}));
+```
+
+## Instance Context
+
+When using dynamic configuration, the function receives an `InstanceContext` object:
+
+<ParamField path="context.initURL" type="string" required>
+  The initial URL passed to the callApi instance
+</ParamField>
+
+<ParamField path="context.options" type="CallApiExtraOptions" required>
+  The extra options passed to the callApi instance
+</ParamField>
+
+<ParamField path="context.request" type="CallApiRequestOptions" required>
+  The request options passed to the callApi instance
+</ParamField>
+
+## Base-Specific Options
+
+In addition to standard request and extra options, the base configuration includes:
+
+<ParamField path="plugins" type="CallApiPlugin[]">
+  Array of base CallApi plugins to extend library functionality. Base plugins are applied to all instances created from this configuration.
+
+  ```typescript
+  const api = createFetchClient({
+    baseURL: 'https://api.example.com',
+    plugins: [loggerPlugin({ enabled: true })],
+  });
+  ```
+</ParamField>
+
+<ParamField path="schema" type="BaseCallApiSchemaAndConfig">
+  Base validation schemas for the client configuration. Defines validation rules that apply to all instances created from this base configuration.
+
+  ```typescript
+  import { z } from 'zod';
+
+  const api = createFetchClient({
+    baseURL: 'https://api.example.com',
+    schema: {
+      routes: {
+        '/users': {
+          response: z.object({
+            id: z.string(),
+            name: z.string(),
+          }),
+        },
+      },
+    },
+  });
+  ```
+</ParamField>
+
+<ParamField path="skipAutoMergeFor" type="'all' | 'options' | 'request'">
+  Controls which configuration parts skip automatic merging between base and instance configs.
+
+  - **"all"**: Disables automatic merging for both request options and extra options
+  - **"options"**: Disables automatic merging of extra options only (hooks, plugins, etc.)
+  - **"request"**: Disables automatic merging of request options only (headers, body, etc.)
+
+  ```typescript
+  // Skip all automatic merging - full manual control
+  const client = createFetchClient((ctx) => ({
+    skipAutoMergeFor: 'all',
+    baseURL: ctx.options.baseURL, // Keep base URL
+    timeout: 5000, // Override timeout
+    headers: {
+      ...ctx.request.headers, // Merge headers manually
+      'X-Custom': 'value',
+    },
+  }));
+
+  // Skip options merging - manual plugin/hook control
+  const client = createFetchClient((ctx) => ({
+    skipAutoMergeFor: 'options',
+    plugins: [
+      ...ctx.options.plugins?.filter(p => p.name !== 'unwanted') || [],
+      customPlugin,
+    ],
+    method: 'POST', // Request options still auto-merge
+  }));
+  ```
+</ParamField>
+
+## Examples
+
+### Basic API Client
+
+```typescript
+const api = createFetchClient({
+  baseURL: 'https://api.example.com',
+  headers: {
+    'Content-Type': 'application/json',
+  },
+  timeout: 10000,
+});
+
+// All requests inherit base configuration
+const users = await api('/users');
+const posts = await api('/posts');
+```
+
+### Authenticated API Client
+
+```typescript
+const api = createFetchClient({
+  baseURL: 'https://api.example.com',
+  auth: 'Bearer your-token',
+  throwOnError: true,
+});
+
+try {
+  const data = await api('/protected/resource');
+  console.log('Success:', data);
+} catch (error) {
+  console.error('Request failed:', error);
+}
+```
+
+### Dynamic Configuration with Context
+
+```typescript
+const api = createFetchClient((ctx) => {
+  // Access the incoming request details
+  const isUpload = ctx.request.body instanceof FormData;
+  
+  return {
+    baseURL: 'https://api.example.com',
+    timeout: isUpload ? 60000 : 5000, // Longer timeout for uploads
+    headers: {
+      // Add custom header based on URL
+      'X-Request-Type': ctx.initURL.includes('/admin/') ? 'admin' : 'user',
+    },
+  };
+});
+```
+
+### With Plugins and Schemas
+
+```typescript
+import { z } from 'zod';
+
+const api = createFetchClient({
+  baseURL: 'https://api.example.com',
+  plugins: [
+    loggerPlugin(),
+    retryPlugin({ maxRetries: 3 }),
+  ],
+  schema: {
+    routes: {
+      '/users': {
+        response: z.array(z.object({
+          id: z.string(),
+          name: z.string(),
+          email: z.string().email(),
+        })),
+      },
+    },
+  },
+  onResponseError: ({ response, error }) => {
+    console.error(`Request failed: ${response.status}`, error);
+  },
+});
+```
+
+## See Also
+
+- [CallApiRequestOptions](/api/config/request-options) - Request-specific configuration
+- [CallApiExtraOptions](/api/config/extra-options) - Additional configuration options
+- [CallApiPlugin](/api/types/plugins) - Plugin interface
+- [Hooks](/api/types/hooks) - Lifecycle hooks

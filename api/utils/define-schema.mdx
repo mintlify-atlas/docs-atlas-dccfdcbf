@@ -1,0 +1,224 @@
+---
+title: defineSchema
+description: Type-safe helper for defining CallApi schemas with routes and configuration
+---
+
+The `defineSchema` utility provides type-safe schema definition for CallApi clients. It helps you create strongly-typed API schemas with routes and configuration that enable end-to-end type safety across your application.
+
+## Import
+
+```ts
+import { defineSchema } from "@zayne-labs/callapi/utils";
+```
+
+## Signature
+
+```ts
+function defineSchema<
+  TBaseSchemaRoutes extends BaseCallApiSchemaRoutes,
+  TSchemaConfig extends CallApiSchemaConfig
+>(
+  routes: TBaseSchemaRoutes,
+  config?: TSchemaConfig
+): BaseCallApiSchemaAndConfig
+```
+
+## Parameters
+
+<Properties>
+  <Property name="routes" type="BaseCallApiSchemaRoutes" required>
+    An object defining your API routes. Each route can specify request/response schemas, methods, and other route-specific configuration.
+  </Property>
+  <Property name="config" type="CallApiSchemaConfig">
+    Optional schema configuration object that applies to all routes. Can include validation settings and other global schema options.
+  </Property>
+</Properties>
+
+## Returns
+
+Returns a `BaseCallApiSchemaAndConfig` object containing:
+- `routes`: The defined routes with deep writeable types
+- `config`: The schema configuration with deep writeable types
+
+## Usage
+
+### Basic Schema Definition
+
+```ts
+import { createFetchClient } from "@zayne-labs/callapi";
+import { defineSchema } from "@zayne-labs/callapi/utils";
+import { z } from "zod";
+
+const userSchema = z.object({
+  id: z.number(),
+  name: z.string(),
+  email: z.string().email(),
+});
+
+const apiSchema = defineSchema({
+  "/users/:id": {
+    response: userSchema,
+  },
+  "/users": {
+    response: z.array(userSchema),
+  },
+});
+
+const api = createFetchClient({
+  baseURL: "https://api.example.com",
+  schema: apiSchema,
+});
+
+// Fully typed response
+const { data } = await api("/users/123");
+// data is typed as { id: number; name: string; email: string }
+```
+
+### Schema with Configuration
+
+```ts
+import { defineSchema } from "@zayne-labs/callapi/utils";
+import { z } from "zod";
+
+const apiSchema = defineSchema(
+  {
+    "/users/:id": {
+      response: z.object({
+        id: z.number(),
+        name: z.string(),
+      }),
+    },
+  },
+  {
+    strict: true, // Enable strict mode for all routes
+  }
+);
+```
+
+### Complete API Schema
+
+```ts
+import { defineSchema } from "@zayne-labs/callapi/utils";
+import { z } from "zod";
+
+const createUserSchema = z.object({
+  name: z.string(),
+  email: z.string().email(),
+});
+
+const userResponseSchema = z.object({
+  id: z.number(),
+  name: z.string(),
+  email: z.string().email(),
+  createdAt: z.string().datetime(),
+});
+
+const apiSchema = defineSchema({
+  "POST /users": {
+    body: createUserSchema,
+    response: userResponseSchema,
+  },
+  "GET /users/:id": {
+    response: userResponseSchema,
+  },
+  "GET /users": {
+    response: z.array(userResponseSchema),
+  },
+});
+
+const api = createFetchClient({
+  baseURL: "https://api.example.com",
+  schema: apiSchema,
+});
+
+// Type-safe request with body validation
+const { data } = await api("POST /users", {
+  body: {
+    name: "John Doe",
+    email: "john@example.com",
+  },
+});
+// data is fully typed based on userResponseSchema
+```
+
+## Related Utilities
+
+- [`defineSchemaRoutes`](#defineschemaroutes) - Define only routes without configuration
+- [`defineSchemaConfig`](#defineschemaconfig) - Define only schema configuration
+- [`defineMainSchema`](#definemainschema) - Define a complete schema with routes and config
+
+### defineSchemaRoutes
+
+Defines only the routes portion of a schema:
+
+```ts
+import { defineSchemaRoutes } from "@zayne-labs/callapi/utils";
+import { z } from "zod";
+
+const routes = defineSchemaRoutes({
+  "/users/:id": {
+    response: z.object({ id: z.number(), name: z.string() }),
+  },
+});
+```
+
+### defineSchemaConfig
+
+Defines only the schema configuration:
+
+```ts
+import { defineSchemaConfig } from "@zayne-labs/callapi/utils";
+
+const config = defineSchemaConfig({
+  strict: true,
+});
+```
+
+### defineMainSchema
+
+Defines a complete schema with both routes and config already combined:
+
+```ts
+import { defineMainSchema } from "@zayne-labs/callapi/utils";
+import { z } from "zod";
+
+const mainSchema = defineMainSchema({
+  routes: {
+    "/users/:id": {
+      response: z.object({ id: z.number() }),
+    },
+  },
+  config: {
+    strict: true,
+  },
+});
+```
+
+## Type Safety
+
+The `defineSchema` utility provides deep type safety:
+
+- **Route keys** are validated against your schema
+- **Request bodies** are type-checked against body schemas
+- **Response data** is automatically typed from response schemas
+- **URL parameters** are inferred from route patterns
+
+```ts
+const schema = defineSchema({
+  "GET /users/:userId/posts/:postId": {
+    response: z.object({ id: z.number(), title: z.string() }),
+  },
+});
+
+const api = createFetchClient({ schema });
+
+// TypeScript knows about userId and postId parameters
+const { data } = await api("GET /users/123/posts/456");
+// data is typed as { id: number; title: string }
+```
+
+## See Also
+
+- [Schema Validation](/api/config/schema) - Learn about schema configuration options
+- [Type Safety](/guides/type-safety) - Understanding CallApi's type system
+- [Validation](/guides/validation) - Working with request/response validation

@@ -1,0 +1,845 @@
+---
+title: Migration Guide
+description: Migrate to CallApi from other fetch libraries
+icon: ArrowRight
+---
+
+This guide helps you migrate from other popular fetch libraries to CallApi. Each section provides step-by-step instructions and code examples.
+
+## From Axios
+
+### Installation
+
+First, install CallApi alongside or instead of Axios:
+
+<Tabs items={["npm", "pnpm", "yarn", "bun"]}>
+<Tab value="npm">
+```bash
+npm install @zayne-labs/callapi
+# Optionally remove axios
+npm uninstall axios
+```
+</Tab>
+<Tab value="pnpm">
+```bash
+pnpm add @zayne-labs/callapi
+# Optionally remove axios
+pnpm remove axios
+```
+</Tab>
+<Tab value="yarn">
+```bash
+yarn add @zayne-labs/callapi
+# Optionally remove axios
+yarn remove axios
+```
+</Tab>
+<Tab value="bun">
+```bash
+bun add @zayne-labs/callapi
+# Optionally remove axios
+bun remove axios
+```
+</Tab>
+</Tabs>
+
+### Basic Request
+
+<Tabs items={["Before (Axios)", "After (CallApi)"]}>
+<Tab value="Before (Axios)">
+```ts
+import axios from 'axios';
+
+// GET request
+const response = await axios.get('https://api.example.com/users');
+const users = response.data;
+
+// POST request
+const response = await axios.post('https://api.example.com/users', {
+  name: 'John Doe',
+  email: 'john@example.com',
+});
+const user = response.data;
+```
+</Tab>
+<Tab value="After (CallApi)">
+```ts
+import { callApi } from '@zayne-labs/callapi';
+
+// GET request
+const { data: users } = await callApi('https://api.example.com/users');
+
+// POST request
+const { data: user } = await callApi('@post/https://api.example.com/users', {
+  body: {
+    name: 'John Doe',
+    email: 'john@example.com',
+  },
+});
+```
+</Tab>
+</Tabs>
+
+### Creating an Instance
+
+<Tabs items={["Before (Axios)", "After (CallApi)"]}>
+<Tab value="Before (Axios)">
+```ts
+import axios from 'axios';
+
+const api = axios.create({
+  baseURL: 'https://api.example.com',
+  timeout: 10000,
+  headers: {
+    'Content-Type': 'application/json',
+  },
+});
+
+const response = await api.get('/users');
+```
+</Tab>
+<Tab value="After (CallApi)">
+```ts
+import { createFetchClient } from '@zayne-labs/callapi';
+
+const api = createFetchClient({
+  baseURL: 'https://api.example.com',
+  timeout: 10000,
+  headers: {
+    'Content-Type': 'application/json',
+  },
+});
+
+const { data } = await api('/users');
+```
+</Tab>
+</Tabs>
+
+### Interceptors → Hooks
+
+<Tabs items={["Before (Axios)", "After (CallApi)"]}>
+<Tab value="Before (Axios)">
+```ts
+import axios from 'axios';
+
+const api = axios.create({
+  baseURL: 'https://api.example.com',
+});
+
+// Request interceptor
+api.interceptors.request.use(
+  (config) => {
+    const token = localStorage.getItem('token');
+    if (token) {
+      config.headers.Authorization = `Bearer ${token}`;
+    }
+    return config;
+  },
+  (error) => Promise.reject(error)
+);
+
+// Response interceptor
+api.interceptors.response.use(
+  (response) => {
+    console.log('Response:', response.status);
+    return response;
+  },
+  (error) => {
+    if (error.response?.status === 401) {
+      // Redirect to login
+      window.location.href = '/login';
+    }
+    return Promise.reject(error);
+  }
+);
+```
+</Tab>
+<Tab value="After (CallApi)">
+```ts
+import { createFetchClient } from '@zayne-labs/callapi';
+
+const api = createFetchClient({
+  baseURL: 'https://api.example.com',
+  
+  // Request hook
+  onRequest: ({ request }) => {
+    const token = localStorage.getItem('token');
+    if (token) {
+      request.headers.set('Authorization', `Bearer ${token}`);
+    }
+  },
+  
+  // Success hook
+  onSuccess: ({ response }) => {
+    console.log('Response:', response.status);
+  },
+  
+  // Error hook
+  onError: ({ response }) => {
+    if (response?.status === 401) {
+      // Redirect to login
+      window.location.href = '/login';
+    }
+  },
+});
+```
+</Tab>
+</Tabs>
+
+### Error Handling
+
+<Tabs items={["Before (Axios)", "After (CallApi)"]}>
+<Tab value="Before (Axios)">
+```ts
+import axios from 'axios';
+
+try {
+  const response = await axios.get('/users');
+  const users = response.data;
+} catch (error) {
+  if (axios.isAxiosError(error)) {
+    console.error('Status:', error.response?.status);
+    console.error('Data:', error.response?.data);
+    console.error('Message:', error.message);
+  } else {
+    console.error('Unexpected error:', error);
+  }
+}
+```
+</Tab>
+<Tab value="After (CallApi)">
+```ts
+import { callApi } from '@zayne-labs/callapi';
+import { isHTTPError } from '@zayne-labs/callapi/utils';
+
+const { data: users, error } = await callApi('/users');
+
+if (error) {
+  if (isHTTPError(error)) {
+    console.error('Status:', error.response?.status);
+    console.error('Data:', error.errorData);
+    console.error('Message:', error.message);
+  } else {
+    console.error('Unexpected error:', error.message);
+  }
+}
+```
+</Tab>
+</Tabs>
+
+### Request Cancellation
+
+<Tabs items={["Before (Axios)", "After (CallApi)"]}>
+<Tab value="Before (Axios)">
+```ts
+import axios from 'axios';
+
+const controller = new AbortController();
+
+try {
+  const response = await axios.get('/users', {
+    signal: controller.signal,
+  });
+} catch (error) {
+  if (axios.isCancel(error)) {
+    console.log('Request cancelled');
+  }
+}
+
+// Cancel the request
+controller.abort();
+```
+</Tab>
+<Tab value="After (CallApi)">
+```ts
+import { callApi } from '@zayne-labs/callapi';
+
+const controller = new AbortController();
+
+const { data, error } = await callApi('/users', {
+  signal: controller.signal,
+});
+
+if (error?.name === 'AbortError') {
+  console.log('Request cancelled');
+}
+
+// Cancel the request
+controller.abort();
+```
+</Tab>
+</Tabs>
+
+### TypeScript Support
+
+<Tabs items={["Before (Axios)", "After (CallApi)"]}>
+<Tab value="Before (Axios)">
+```ts
+import axios from 'axios';
+
+type User = {
+  id: number;
+  name: string;
+  email: string;
+};
+
+// Manual typing
+const response = await axios.get<User>('/users/1');
+const user = response.data; // Type: User
+
+// No runtime validation
+```
+</Tab>
+<Tab value="After (CallApi)">
+```ts
+import { callApi } from '@zayne-labs/callapi';
+import { z } from 'zod';
+
+const userSchema = z.object({
+  id: z.number(),
+  name: z.string(),
+  email: z.string(),
+});
+
+// Automatic type inference + runtime validation
+const { data: user } = await callApi('/users/1', {
+  schema: { data: userSchema },
+});
+// Type automatically inferred from schema!
+```
+</Tab>
+</Tabs>
+
+## From Ky
+
+### Installation
+
+<Tabs items={["npm", "pnpm", "yarn", "bun"]}>
+<Tab value="npm">
+```bash
+npm install @zayne-labs/callapi
+npm uninstall ky
+```
+</Tab>
+<Tab value="pnpm">
+```bash
+pnpm add @zayne-labs/callapi
+pnpm remove ky
+```
+</Tab>
+<Tab value="yarn">
+```bash
+yarn add @zayne-labs/callapi
+yarn remove ky
+```
+</Tab>
+<Tab value="bun">
+```bash
+bun add @zayne-labs/callapi
+bun remove ky
+```
+</Tab>
+</Tabs>
+
+### Basic Usage
+
+<Tabs items={["Before (Ky)", "After (CallApi)"]}>
+<Tab value="Before (Ky)">
+```ts
+import ky from 'ky';
+
+// GET request
+const users = await ky.get('https://api.example.com/users').json();
+
+// POST request
+const user = await ky.post('https://api.example.com/users', {
+  json: {
+    name: 'John Doe',
+    email: 'john@example.com',
+  },
+}).json();
+```
+</Tab>
+<Tab value="After (CallApi)">
+```ts
+import { callApi } from '@zayne-labs/callapi';
+
+// GET request
+const { data: users } = await callApi('https://api.example.com/users');
+
+// POST request
+const { data: user } = await callApi('@post/https://api.example.com/users', {
+  body: {
+    name: 'John Doe',
+    email: 'john@example.com',
+  },
+});
+```
+</Tab>
+</Tabs>
+
+### Creating an Instance
+
+<Tabs items={["Before (Ky)", "After (CallApi)"]}>
+<Tab value="Before (Ky)">
+```ts
+import ky from 'ky';
+
+const api = ky.create({
+  prefixUrl: 'https://api.example.com',
+  timeout: 10000,
+  retry: 2,
+});
+
+const users = await api.get('users').json();
+```
+</Tab>
+<Tab value="After (CallApi)">
+```ts
+import { createFetchClient } from '@zayne-labs/callapi';
+
+const api = createFetchClient({
+  baseURL: 'https://api.example.com',
+  timeout: 10000,
+  retryAttempts: 2,
+});
+
+const { data: users } = await api('/users');
+```
+</Tab>
+</Tabs>
+
+### Hooks
+
+<Tabs items={["Before (Ky)", "After (CallApi)"]}>
+<Tab value="Before (Ky)">
+```ts
+import ky from 'ky';
+
+const api = ky.create({
+  hooks: {
+    beforeRequest: [
+      (request) => {
+        request.headers.set('Authorization', `Bearer ${token}`);
+      },
+    ],
+    afterResponse: [
+      (request, options, response) => {
+        console.log('Response:', response.status);
+      },
+    ],
+  },
+});
+```
+</Tab>
+<Tab value="After (CallApi)">
+```ts
+import { createFetchClient } from '@zayne-labs/callapi';
+
+const api = createFetchClient({
+  onRequest: ({ request }) => {
+    request.headers.set('Authorization', `Bearer ${token}`);
+  },
+  onSuccess: ({ response }) => {
+    console.log('Response:', response.status);
+  },
+});
+```
+</Tab>
+</Tabs>
+
+### Error Handling
+
+<Tabs items={["Before (Ky)", "After (CallApi)"]}>
+<Tab value="Before (Ky)">
+```ts
+import ky from 'ky';
+
+try {
+  const users = await ky.get('api/users').json();
+} catch (error) {
+  if (error instanceof ky.HTTPError) {
+    console.error('Status:', error.response.status);
+    const errorData = await error.response.json();
+    console.error('Error data:', errorData);
+  }
+}
+```
+</Tab>
+<Tab value="After (CallApi)">
+```ts
+import { callApi } from '@zayne-labs/callapi';
+import { isHTTPError } from '@zayne-labs/callapi/utils';
+
+const { data: users, error } = await callApi('api/users');
+
+if (error) {
+  if (isHTTPError(error)) {
+    console.error('Status:', error.response?.status);
+    console.error('Error data:', error.errorData); // Already parsed!
+  }
+}
+```
+</Tab>
+</Tabs>
+
+## From Ofetch
+
+### Installation
+
+<Tabs items={["npm", "pnpm", "yarn", "bun"]}>
+<Tab value="npm">
+```bash
+npm install @zayne-labs/callapi
+npm uninstall ofetch
+```
+</Tab>
+<Tab value="pnpm">
+```bash
+pnpm add @zayne-labs/callapi
+pnpm remove ofetch
+```
+</Tab>
+<Tab value="yarn">
+```bash
+yarn add @zayne-labs/callapi
+yarn remove ofetch
+```
+</Tab>
+<Tab value="bun">
+```bash
+bun add @zayne-labs/callapi
+bun remove ofetch
+```
+</Tab>
+</Tabs>
+
+### Basic Usage
+
+<Tabs items={["Before (Ofetch)", "After (CallApi)"]}>
+<Tab value="Before (Ofetch)">
+```ts
+import { ofetch } from 'ofetch';
+
+// GET request
+const users = await ofetch('https://api.example.com/users');
+
+// POST request
+const user = await ofetch('https://api.example.com/users', {
+  method: 'POST',
+  body: {
+    name: 'John Doe',
+    email: 'john@example.com',
+  },
+});
+```
+</Tab>
+<Tab value="After (CallApi)">
+```ts
+import { callApi } from '@zayne-labs/callapi';
+
+// GET request
+const { data: users } = await callApi('https://api.example.com/users');
+
+// POST request  
+const { data: user } = await callApi('@post/https://api.example.com/users', {
+  body: {
+    name: 'John Doe',
+    email: 'john@example.com',
+  },
+});
+```
+</Tab>
+</Tabs>
+
+### Creating an Instance
+
+<Tabs items={["Before (Ofetch)", "After (CallApi)"]}>
+<Tab value="Before (Ofetch)">
+```ts
+import { ofetch } from 'ofetch';
+
+const api = ofetch.create({
+  baseURL: 'https://api.example.com',
+  retry: 2,
+  retryDelay: 1000,
+});
+
+const users = await api('/users');
+```
+</Tab>
+<Tab value="After (CallApi)">
+```ts
+import { createFetchClient } from '@zayne-labs/callapi';
+
+const api = createFetchClient({
+  baseURL: 'https://api.example.com',
+  retryAttempts: 2,
+  retryDelay: 1000,
+});
+
+const { data: users } = await api('/users');
+```
+</Tab>
+</Tabs>
+
+### Interceptors → Hooks
+
+<Tabs items={["Before (Ofetch)", "After (CallApi)"]}>
+<Tab value="Before (Ofetch)">
+```ts
+import { ofetch } from 'ofetch';
+
+const api = ofetch.create({
+  baseURL: 'https://api.example.com',
+  
+  onRequest: ({ options }) => {
+    options.headers = {
+      ...options.headers,
+      Authorization: `Bearer ${token}`,
+    };
+  },
+  
+  onResponse: ({ response }) => {
+    console.log('Response:', response.status);
+  },
+  
+  onResponseError: ({ response }) => {
+    console.error('Error:', response.status);
+  },
+});
+```
+</Tab>
+<Tab value="After (CallApi)">
+```ts
+import { createFetchClient } from '@zayne-labs/callapi';
+
+const api = createFetchClient({
+  baseURL: 'https://api.example.com',
+  
+  onRequest: ({ request }) => {
+    request.headers.set('Authorization', `Bearer ${token}`);
+  },
+  
+  onSuccess: ({ response }) => {
+    console.log('Response:', response.status);
+  },
+  
+  onError: ({ response }) => {
+    console.error('Error:', response?.status);
+  },
+});
+```
+</Tab>
+</Tabs>
+
+### Error Handling
+
+<Tabs items={["Before (Ofetch)", "After (CallApi)"]}>
+<Tab value="Before (Ofetch)">
+```ts
+import { ofetch } from 'ofetch';
+
+try {
+  const users = await ofetch('/users');
+} catch (error) {
+  console.error('Error:', error.data);
+  console.error('Status:', error.statusCode);
+}
+```
+</Tab>
+<Tab value="After (CallApi)">
+```ts
+import { callApi } from '@zayne-labs/callapi';
+import { isHTTPError } from '@zayne-labs/callapi/utils';
+
+const { data: users, error } = await callApi('/users');
+
+if (error) {
+  if (isHTTPError(error)) {
+    console.error('Error:', error.errorData);
+    console.error('Status:', error.response?.status);
+  }
+}
+```
+</Tab>
+</Tabs>
+
+## Common Patterns
+
+### Authentication
+
+<Tabs items={["Axios/Ky/Ofetch", "CallApi"]}>
+<Tab value="Axios/Ky/Ofetch">
+```ts
+// Various approaches depending on library
+// Usually involves interceptors or hooks
+```
+</Tab>
+<Tab value="CallApi">
+```ts
+import { createFetchClient } from '@zayne-labs/callapi';
+
+const api = createFetchClient({
+  baseURL: 'https://api.example.com',
+  
+  onRequest: ({ request }) => {
+    const token = localStorage.getItem('token');
+    if (token) {
+      request.headers.set('Authorization', `Bearer ${token}`);
+    }
+  },
+  
+  onError: async ({ error, response, options, retry }) => {
+    // Refresh token on 401
+    if (response?.status === 401) {
+      const newToken = await refreshToken();
+      localStorage.setItem('token', newToken);
+      
+      // Retry with new token
+      return retry?.();
+    }
+  },
+});
+```
+</Tab>
+</Tabs>
+
+### File Upload with Progress
+
+<Tabs items={["Axios", "CallApi"]}>
+<Tab value="Axios">
+```ts
+import axios from 'axios';
+
+const formData = new FormData();
+formData.append('file', file);
+
+const response = await axios.post('/upload', formData, {
+  onUploadProgress: (progressEvent) => {
+    const progress = (progressEvent.loaded / progressEvent.total) * 100;
+    console.log(`Upload progress: ${progress}%`);
+  },
+});
+```
+</Tab>
+<Tab value="CallApi">
+```ts
+import { callApi } from '@zayne-labs/callapi';
+
+const formData = new FormData();
+formData.append('file', file);
+
+const { data } = await callApi('@post/upload', {
+  body: formData,
+  onResponseStream: ({ event }) => {
+    if (event.type === 'progress') {
+      console.log(`Upload progress: ${event.progress}%`);
+    }
+  },
+});
+```
+</Tab>
+</Tabs>
+
+### Query Parameters
+
+<Tabs items={["Other Libraries", "CallApi"]}>
+<Tab value="Other Libraries">
+```ts
+// Manual URL construction
+const response = await api.get('/users?role=admin&status=active');
+
+// Or using params option (varies by library)
+const response = await api.get('/users', {
+  params: { role: 'admin', status: 'active' },
+});
+```
+</Tab>
+<Tab value="CallApi">
+```ts
+import { callApi } from '@zayne-labs/callapi';
+
+// Built-in query helper
+const { data: users } = await callApi('/users', {
+  query: { role: 'admin', status: 'active' },
+});
+// Automatically constructs: /users?role=admin&status=active
+```
+</Tab>
+</Tabs>
+
+### URL Parameters
+
+<Tabs items={["Other Libraries", "CallApi"]}>
+<Tab value="Other Libraries">
+```ts
+// Manual URL construction
+const userId = 123;
+const response = await api.get(`/users/${userId}`);
+```
+</Tab>
+<Tab value="CallApi">
+```ts
+import { callApi } from '@zayne-labs/callapi';
+
+// Built-in param substitution
+const { data: user } = await callApi('/users/:id', {
+  params: { id: 123 },
+});
+// Automatically constructs: /users/123
+```
+</Tab>
+</Tabs>
+
+## Migration Checklist
+
+### Step 1: Install CallApi
+
+- [ ] Install `@zayne-labs/callapi`
+- [ ] Optionally install validation library (Zod, Valibot, etc.)
+
+### Step 2: Update Imports
+
+- [ ] Replace old library imports with CallApi imports
+- [ ] Update import paths throughout your codebase
+
+### Step 3: Update API Client
+
+- [ ] Convert instance creation to `createFetchClient`
+- [ ] Map configuration options
+- [ ] Convert interceptors to hooks
+
+### Step 4: Update API Calls
+
+- [ ] Update request syntax
+- [ ] Add destructuring for `data` and `error`
+- [ ] Update error handling
+- [ ] Add schema validation (optional but recommended)
+
+### Step 5: Test
+
+- [ ] Test all API calls
+- [ ] Test error scenarios
+- [ ] Test authentication flows
+- [ ] Test file uploads
+- [ ] Test request cancellation
+
+### Step 6: Optimize
+
+- [ ] Add schema validation for type safety
+- [ ] Configure request deduplication
+- [ ] Set up retry strategies
+- [ ] Create custom plugins if needed
+- [ ] Add progress tracking for uploads/downloads
+
+## Need Help?
+
+If you encounter issues during migration:
+
+1. Check the [FAQ](/resources/faq) for common questions
+2. Review the [API documentation](/docs/getting-started)
+3. Compare with [library comparisons](/resources/comparisons)
+4. Open an issue on [GitHub](https://github.com/zayne-labs/callapi/issues)
+
+Migration is usually straightforward and provides immediate benefits in bundle size, type safety, and developer experience.

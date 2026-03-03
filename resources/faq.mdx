@@ -1,0 +1,740 @@
+---
+title: Frequently Asked Questions
+description: Common questions about CallApi
+icon: CircleHelp
+---
+
+## General Questions
+
+### What is CallApi?
+
+CallApi is a modern, TypeScript-first fetch wrapper that extends the native Fetch API with powerful features like request deduplication, automatic retries, schema validation, and more. It's designed to solve real problems you encounter in production applications while maintaining a small bundle size (&lt;6KB).
+
+### Why choose CallApi over other libraries?
+
+CallApi combines the best features from libraries like Axios, Ky, and Ofetch while adding unique capabilities:
+
+- **Request deduplication** with multiple strategies
+- **Built-in schema validation** with automatic type inference
+- **Extensible plugin system** for custom functionality
+- **Comprehensive TypeScript support** with full type inference
+- **Small bundle size** (&lt;6KB) with zero dependencies
+- **Modern fetch-based** API that works everywhere
+
+See our [comparison guide](/resources/comparisons) for detailed comparisons.
+
+### Is CallApi production-ready?
+
+Yes! CallApi is actively maintained and used in production applications. It follows semantic versioning and has comprehensive test coverage.
+
+### What environments does CallApi support?
+
+CallApi works in any environment that supports the Fetch API:
+
+- Modern browsers (Chrome, Firefox, Safari, Edge)
+- Node.js 18+
+- Deno
+- Bun
+- Cloudflare Workers
+- Vercel Edge Functions
+- Other edge runtimes
+
+### Is CallApi free to use?
+
+Yes! CallApi is open source under the MIT license, which means you can use it freely in both personal and commercial projects.
+
+## TypeScript Questions
+
+### Do I need TypeScript to use CallApi?
+
+No! CallApi works perfectly with plain JavaScript. However, TypeScript users get additional benefits like automatic type inference from schemas and better IDE autocomplete.
+
+### How does type inference work?
+
+CallApi automatically infers types from validation schemas:
+
+```ts
+import { callApi } from '@zayne-labs/callapi';
+import { z } from 'zod';
+
+const userSchema = z.object({
+  id: z.number(),
+  name: z.string(),
+  email: z.string().email(),
+});
+
+const { data: user } = await callApi('/users/1', {
+  schema: { data: userSchema },
+});
+// 'user' is automatically typed as { id: number; name: string; email: string }
+```
+
+### Can I use CallApi without schema validation?
+
+Yes! You can provide types manually using TypeScript generics:
+
+```ts
+type User = {
+  id: number;
+  name: string;
+  email: string;
+};
+
+const { data, error } = await callApi<User>('/users/1');
+// 'data' is typed as User | null
+```
+
+### Why do I need to pass `false` as the second generic sometimes?
+
+When using `throwOnError: true` or `resultMode: "onlyData"`, you need to signal this to TypeScript:
+
+```ts
+const data = await callApi<User, false>('/users/1', {
+  throwOnError: true,
+  resultMode: 'onlyData',
+});
+// 'data' is typed as User (not User | null)
+```
+
+This is due to TypeScript's limitation with partial generic inference. See [TypeScript issue #26242](https://github.com/microsoft/TypeScript/issues/26242).
+
+### How do I extend CallApi's types?
+
+Use module augmentation to extend CallApi's types:
+
+```ts
+declare module '@zayne-labs/callapi' {
+  interface Register {
+    meta: {
+      userId: string;
+      requestId: string;
+    };
+  }
+}
+
+// Now you can use custom meta properties with full type support
+const api = createFetchClient({
+  meta: {
+    userId: '123',
+    requestId: 'abc',
+  },
+});
+```
+
+## Usage Questions
+
+### How do I handle authentication?
+
+Use the `onRequest` hook to add authentication headers:
+
+```ts
+const api = createFetchClient({
+  baseURL: 'https://api.example.com',
+  
+  onRequest: ({ request }) => {
+    const token = localStorage.getItem('token');
+    if (token) {
+      request.headers.set('Authorization', `Bearer ${token}`);
+    }
+  },
+});
+```
+
+For token refresh on 401:
+
+```ts
+const api = createFetchClient({
+  baseURL: 'https://api.example.com',
+  
+  onError: async ({ response, retry }) => {
+    if (response?.status === 401) {
+      const newToken = await refreshToken();
+      localStorage.setItem('token', newToken);
+      return retry?.(); // Retry with new token
+    }
+  },
+});
+```
+
+### How do I upload files?
+
+Use FormData for file uploads:
+
+```ts
+const formData = new FormData();
+formData.append('file', file);
+formData.append('name', 'Document.pdf');
+
+const { data } = await callApi('@post/upload', {
+  body: formData,
+});
+```
+
+With progress tracking:
+
+```ts
+const { data } = await callApi('@post/upload', {
+  body: formData,
+  onResponseStream: ({ event }) => {
+    if (event.type === 'progress') {
+      console.log(`Upload progress: ${event.progress}%`);
+    }
+  },
+});
+```
+
+### How do I download files?
+
+For small files:
+
+```ts
+const { data } = await callApi('/files/document.pdf', {
+  responseParser: 'blob',
+});
+
+// Create download link
+const url = URL.createObjectURL(data);
+const a = document.createElement('a');
+a.href = url;
+a.download = 'document.pdf';
+a.click();
+URL.revokeObjectURL(url);
+```
+
+With progress tracking:
+
+```ts
+const { data } = await callApi('/files/large-file.zip', {
+  responseParser: 'blob',
+  onResponseStream: ({ event }) => {
+    if (event.type === 'progress') {
+      console.log(`Download progress: ${event.progress}%`);
+    }
+  },
+});
+```
+
+### How do I cancel requests?
+
+Use AbortController:
+
+```ts
+const controller = new AbortController();
+
+const { data, error } = await callApi('/users', {
+  signal: controller.signal,
+});
+
+// Cancel the request
+controller.abort();
+
+if (error?.name === 'AbortError') {
+  console.log('Request was cancelled');
+}
+```
+
+### How do I handle request deduplication?
+
+CallApi automatically deduplicates requests. Choose your strategy:
+
+```ts
+// Cancel previous requests (default)
+const { data } = await callApi('/users', {
+  dedupeStrategy: 'cancel',
+});
+
+// Share response between duplicate requests
+const { data } = await callApi('/users', {
+  dedupeStrategy: 'defer',
+});
+
+// Disable deduplication
+const { data } = await callApi('/users', {
+  dedupeStrategy: 'none',
+});
+```
+
+See the [Request Deduplication](/docs/request-dedupe) guide for details.
+
+### How do I configure retries?
+
+Configure retries at the client or request level:
+
+```ts
+const api = createFetchClient({
+  baseURL: 'https://api.example.com',
+  retryAttempts: 3,
+  retryStrategy: 'exponential',
+  retryDelay: 1000,
+  retryMaxDelay: 10000,
+  retryStatusCodes: [429, 500, 502, 503, 504],
+});
+```
+
+With custom retry logic:
+
+```ts
+const { data } = await callApi('/users', {
+  retryAttempts: 3,
+  retryCondition: ({ error, response }) => {
+    // Only retry on specific conditions
+    return response?.status === 429;
+  },
+  onRetry: ({ retryAttemptCount }) => {
+    console.log(`Retry attempt ${retryAttemptCount}`);
+  },
+});
+```
+
+### How do I use CallApi with React Query?
+
+Configure CallApi to throw errors and return only data:
+
+```ts
+import { createFetchClient } from '@zayne-labs/callapi';
+import { useQuery } from '@tanstack/react-query';
+
+const queryClient = createFetchClient({
+  baseURL: 'https://api.example.com',
+  throwOnError: true,
+  resultMode: 'onlyData',
+});
+
+export function useTodos() {
+  return useQuery({
+    queryKey: ['todos'],
+    queryFn: () => queryClient<Todo[], false>('/todos'),
+  });
+}
+```
+
+See the [React Query Integration](/integrations/react-query) guide for more patterns.
+
+### How do I handle different response types?
+
+Use the `responseParser` option:
+
+```ts
+// JSON (default)
+const { data } = await callApi('/api/data');
+
+// Text
+const { data } = await callApi('/api/text', {
+  responseParser: 'text',
+});
+
+// Blob (for files)
+const { data } = await callApi('/api/file', {
+  responseParser: 'blob',
+});
+
+// ArrayBuffer
+const { data } = await callApi('/api/binary', {
+  responseParser: 'arrayBuffer',
+});
+
+// FormData
+const { data } = await callApi('/api/form', {
+  responseParser: 'formData',
+});
+```
+
+### How do I set custom headers?
+
+Set headers at the client or request level:
+
+```ts
+// At client level
+const api = createFetchClient({
+  headers: {
+    'Content-Type': 'application/json',
+    'X-API-Key': 'your-api-key',
+  },
+});
+
+// At request level
+const { data } = await callApi('/users', {
+  headers: {
+    'X-Custom-Header': 'value',
+  },
+});
+
+// Using onRequest hook (dynamic)
+const api = createFetchClient({
+  onRequest: ({ request }) => {
+    request.headers.set('X-Request-ID', generateId());
+  },
+});
+```
+
+## Schema Validation Questions
+
+### What validation libraries are supported?
+
+CallApi supports any library that implements the [Standard Schema specification](https://github.com/standard-schema/standard-schema):
+
+- **Zod** - Most popular, excellent TypeScript support
+- **Valibot** - Lightweight and performant
+- **ArkType** - Advanced type-level validation
+- **Yup** - Popular in form validation
+- **And more!**
+
+### Do I need to validate every request?
+
+No! Validation is optional. Use it when:
+
+- You need runtime type safety
+- You want automatic type inference
+- You're working with external APIs
+- Data integrity is critical
+
+### Can I validate request data?
+
+Yes! Validate body, headers, params, and query:
+
+```ts
+import { z } from 'zod';
+
+const createUserSchema = z.object({
+  name: z.string().min(1),
+  email: z.string().email(),
+  age: z.number().min(18),
+});
+
+const { data } = await callApi('@post/users', {
+  body: {
+    name: 'John Doe',
+    email: 'john@example.com',
+    age: 25,
+  },
+  schema: {
+    body: createUserSchema, // Validates before sending
+  },
+});
+```
+
+### What happens when validation fails?
+
+A `ValidationError` is returned (or thrown if `throwOnError: true`):
+
+```ts
+import { isValidationError } from '@zayne-labs/callapi/utils';
+
+const { error } = await callApi('/users/1', {
+  schema: { data: userSchema },
+});
+
+if (isValidationError(error)) {
+  console.error('Validation failed:', error.message);
+  console.error('Issues:', error.errorData); // Array of validation issues
+}
+```
+
+### Can I customize validation error messages?
+
+Yes! Most schema libraries allow custom error messages:
+
+```ts
+import { z } from 'zod';
+
+const userSchema = z.object({
+  name: z.string().min(1, 'Name is required'),
+  email: z.string().email('Invalid email format'),
+  age: z.number().min(18, 'Must be at least 18 years old'),
+});
+```
+
+## Plugin Questions
+
+### What are plugins?
+
+Plugins extend CallApi with reusable functionality. They can:
+
+- Modify requests before they're sent
+- Intercept the fetch call
+- Hook into the request lifecycle
+- Add custom options
+
+See the [Plugins](/docs/plugins) guide for details.
+
+### How do I create a plugin?
+
+Use the `definePlugin` helper:
+
+```ts
+import { definePlugin } from '@zayne-labs/callapi/utils';
+
+const loggingPlugin = definePlugin({
+  id: 'logging',
+  name: 'Logging Plugin',
+  
+  hooks: {
+    onRequest: ({ options }) => {
+      console.log('→', options.method, options.fullURL);
+    },
+    onSuccess: ({ response }) => {
+      console.log('←', response.status);
+    },
+  },
+});
+
+const api = createFetchClient({
+  plugins: [loggingPlugin],
+});
+```
+
+### Are there official plugins?
+
+Yes! CallApi includes several official plugins:
+
+- **Logger Plugin** - Request/response logging
+- More coming soon!
+
+See the [plugins documentation](https://github.com/zayne-labs/callapi/tree/main/packages/callapi-plugins).
+
+### Can I share plugins across projects?
+
+Yes! Create an npm package with your plugin and install it in multiple projects:
+
+```ts
+// my-callapi-plugin package
+export const myPlugin = definePlugin({
+  // ... plugin configuration
+});
+
+// In your projects
+import { myPlugin } from 'my-callapi-plugin';
+
+const api = createFetchClient({
+  plugins: [myPlugin],
+});
+```
+
+## Error Handling Questions
+
+### What types of errors can occur?
+
+CallApi provides structured errors:
+
+- **HTTPError** - HTTP response errors (4xx, 5xx)
+- **ValidationError** - Schema validation failures
+- **TimeoutError** - Request timeout
+- **AbortError** - Request cancelled
+- **TypeError** - Network errors, invalid URLs
+- **Other JavaScript errors**
+
+See the [Error Handling](/docs/error-handling) guide.
+
+### How do I check error types?
+
+Use the provided type guards:
+
+```ts
+import { 
+  isHTTPError, 
+  isValidationError,
+  isHTTPErrorInstance,
+  isValidationErrorInstance,
+} from '@zayne-labs/callapi/utils';
+
+// When errors are returned (default)
+const { error } = await callApi('/users');
+
+if (isHTTPError(error)) {
+  // Handle HTTP errors
+}
+
+if (isValidationError(error)) {
+  // Handle validation errors
+}
+
+// When errors are thrown (throwOnError: true)
+try {
+  await callApi('/users', { throwOnError: true });
+} catch (error) {
+  if (isHTTPErrorInstance(error)) {
+    // Handle HTTP errors
+  }
+  
+  if (isValidationErrorInstance(error)) {
+    // Handle validation errors
+  }
+}
+```
+
+### Should I use `throwOnError` or return errors?
+
+It depends on your use case:
+
+**Return errors (default)** when:
+- You prefer explicit error handling
+- You want to avoid try/catch blocks
+- You're building your own abstraction
+
+**Throw errors** when:
+- Integrating with React Query or similar libraries
+- You prefer exception-based error handling
+- You want errors to propagate to error boundaries
+
+```ts
+// Return errors (default)
+const { data, error } = await callApi('/users');
+if (error) {
+  // Handle error
+}
+
+// Throw errors
+try {
+  const { data } = await callApi('/users', { throwOnError: true });
+} catch (error) {
+  // Handle error
+}
+```
+
+### How do I access the original Response object?
+
+It's always available in the result:
+
+```ts
+const { data, error, response } = await callApi('/users');
+
+console.log(response.status);
+console.log(response.headers.get('Content-Type'));
+console.log(response.ok);
+```
+
+## Performance Questions
+
+### Does request deduplication improve performance?
+
+Yes! Request deduplication prevents:
+
+- Duplicate network requests
+- Wasted bandwidth
+- Race conditions
+- Unnecessary server load
+
+It's especially useful in React applications where multiple components might request the same data.
+
+### How does CallApi compare in bundle size?
+
+- **CallApi**: &lt;6KB minified + gzipped
+- **Axios**: ~13KB
+- **Ky**: ~5KB
+- **Ofetch**: ~8KB
+
+CallApi provides more features while maintaining a competitive size.
+
+### Does CallApi cache responses?
+
+No. CallApi doesn't implement response caching. For caching, use:
+
+- TanStack Query for client-side caching
+- HTTP cache headers
+- Service Workers
+- Custom caching plugins
+
+### Can I use CallApi for SSR?
+
+Yes! CallApi works in Node.js 18+ and all edge runtimes:
+
+```ts
+// Next.js Server Component
+import { callApi } from '@zayne-labs/callapi';
+
+export default async function Page() {
+  const { data: users } = await callApi('https://api.example.com/users');
+  
+  return (
+    <ul>
+      {users.map(user => <li key={user.id}>{user.name}</li>)}
+    </ul>
+  );
+}
+```
+
+## Troubleshooting
+
+### Why am I getting TypeScript errors?
+
+Common issues:
+
+1. **Missing second generic**: When using `throwOnError: true` or `resultMode: "onlyData"`, pass `false` as second generic:
+   ```ts
+   const data = await callApi<User, false>('/users/1', { throwOnError: true });
+   ```
+
+2. **Schema type mismatch**: Ensure your schema matches the actual API response
+
+3. **Old TypeScript version**: CallApi requires TypeScript 4.7+
+
+### Why aren't my requests being deduplicated?
+
+Check that:
+
+1. Requests are from the same `callApi` instance
+2. Requests have identical URLs and parameters
+3. Deduplication isn't disabled (`dedupeStrategy: 'none'`)
+
+### Why aren't retries working?
+
+Verify:
+
+1. `retryAttempts` is set to a number > 0
+2. The HTTP method is in `retryMethods` (default: `['GET', 'POST']`)
+3. The status code is in `retryStatusCodes` (if specified)
+4. Your `retryCondition` function returns `true` (if specified)
+
+### Why is validation failing?
+
+Check:
+
+1. Your schema matches the actual response structure
+2. All required fields are present
+3. Field types match (string vs number, etc.)
+4. Array vs single object mismatch
+
+Enable detailed error logging:
+
+```ts
+import { isValidationError } from '@zayne-labs/callapi/utils';
+
+const { error } = await callApi('/users', {
+  schema: { data: userSchema },
+});
+
+if (isValidationError(error)) {
+  console.error('Validation issues:', error.errorData);
+}
+```
+
+## Getting Help
+
+### Where can I get help?
+
+1. **Documentation**: Check the [full documentation](/docs/getting-started)
+2. **GitHub Issues**: [Open an issue](https://github.com/zayne-labs/callapi/issues)
+3. **GitHub Discussions**: Ask questions in [Discussions](https://github.com/zayne-labs/callapi/discussions)
+
+### How do I report a bug?
+
+Open an issue on [GitHub](https://github.com/zayne-labs/callapi/issues) with:
+
+1. Clear description of the issue
+2. Minimal reproduction code
+3. Expected vs actual behavior
+4. CallApi version
+5. Environment (browser, Node.js version, etc.)
+
+### How do I request a feature?
+
+Open a feature request on [GitHub Discussions](https://github.com/zayne-labs/callapi/discussions) with:
+
+1. Clear use case description
+2. Why existing features don't solve it
+3. Proposed API (if you have ideas)
+4. Examples from other libraries (if applicable)
+
+### Can I contribute?
+
+Yes! Contributions are welcome. See the [Contributing Guide](https://github.com/zayne-labs/callapi/blob/main/CONTRIBUTING.md) for details.

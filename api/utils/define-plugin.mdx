@@ -1,0 +1,361 @@
+---
+title: definePlugin
+description: Type-safe helper for creating CallApi plugins
+---
+
+The `definePlugin` utility provides type-safe plugin creation for CallApi. It ensures your plugins have proper TypeScript types and helps you extend CallApi with reusable functionality.
+
+## Import
+
+```ts
+import { definePlugin } from "@zayne-labs/callapi/utils";
+```
+
+## Signature
+
+```ts
+function definePlugin<TPlugin extends CallApiPlugin>(
+  plugin: TPlugin
+): Writeable<TPlugin, "deep">
+```
+
+## Parameters
+
+<Properties>
+  <Property name="plugin" type="CallApiPlugin" required>
+    A plugin object containing an `id`, `name`, and optional `hooks`, `middlewares`, `setup`, `description`, `version`, `schema`, and `defineExtraOptions`.
+  </Property>
+</Properties>
+
+## Returns
+
+Returns the plugin with deep writeable types, ensuring full type safety throughout your plugin implementation.
+
+## Basic Usage
+
+### Simple Plugin
+
+```ts
+import { definePlugin } from "@zayne-labs/callapi/utils";
+
+const loggingPlugin = definePlugin({
+  id: "logging",
+  name: "Request Logger",
+  description: "Logs all requests and responses",
+  version: "1.0.0",
+
+  hooks: {
+    onRequest: (ctx) => {
+      console.log(`→ ${ctx.request.method} ${ctx.options.fullURL}`);
+    },
+    onSuccess: (ctx) => {
+      console.log(`✓ ${ctx.request.method} ${ctx.options.fullURL}`);
+    },
+    onError: (ctx) => {
+      console.error(`✗ ${ctx.request.method} ${ctx.options.fullURL}`, ctx.error);
+    },
+  },
+});
+```
+
+### Plugin with Setup
+
+The `setup` function runs before request processing and can modify the initial request configuration:
+
+```ts
+import { definePlugin } from "@zayne-labs/callapi/utils";
+
+const envPlugin = definePlugin({
+  id: "env-plugin",
+  name: "Environment Plugin",
+  version: "1.0.0",
+
+  setup: ({ request, options, initURL }) => {
+    const env = process.env.NODE_ENV || "development";
+
+    return {
+      request: {
+        ...request,
+        headers: {
+          ...request.headers,
+          "X-Environment": env,
+        },
+      },
+      options: {
+        ...options,
+        meta: {
+          ...options.meta,
+          environment: env,
+        },
+      },
+    };
+  },
+});
+```
+
+### Plugin with Middleware
+
+Plugins can wrap the fetch call using middleware:
+
+```ts
+import { definePlugin } from "@zayne-labs/callapi/utils";
+
+const retryPlugin = definePlugin({
+  id: "retry",
+  name: "Retry Plugin",
+  version: "1.0.0",
+
+  middlewares: {
+    fetchMiddleware: (ctx) => async (input, init) => {
+      let lastError;
+      const maxRetries = 3;
+
+      for (let attempt = 0; attempt < maxRetries; attempt++) {
+        try {
+          const response = await ctx.fetchImpl(input, init);
+          if (response.ok) return response;
+        } catch (error) {
+          lastError = error;
+          if (attempt < maxRetries - 1) {
+            await new Promise((resolve) => setTimeout(resolve, 1000 * (attempt + 1)));
+          }
+        }
+      }
+
+      throw lastError;
+    },
+  },
+});
+```
+
+### Plugin with Custom Options
+
+Plugins can define custom options that users can pass to API calls:
+
+```ts
+import { definePlugin } from "@zayne-labs/callapi/utils";
+import { z } from "zod";
+
+const apiVersionSchema = z.object({
+  apiVersion: z.enum(["v1", "v2", "v3"]).optional(),
+});
+
+const apiVersionPlugin = definePlugin({
+  id: "api-version",
+  name: "API Version Plugin",
+  version: "1.0.0",
+
+  defineExtraOptions: () => apiVersionSchema,
+
+  setup: (ctx) => {
+    const version = ctx.options.apiVersion ?? "v1";
+
+    return {
+      request: {
+        ...ctx.request,
+        headers: {
+          ...ctx.request.headers,
+          "X-API-Version": version,
+        },
+      },
+    };
+  },
+});
+
+// Usage
+const api = createFetchClient({
+  baseURL: "https://api.example.com",
+  plugins: [apiVersionPlugin],
+});
+
+// Use custom option
+const { data } = await api("/users", {
+  apiVersion: "v2", // Type-safe custom option
+});
+```
+
+## Advanced Examples
+
+### Authentication Plugin
+
+```ts
+import { definePlugin } from "@zayne-labs/callapi/utils";
+
+const authPlugin = definePlugin({
+  id: "auth",
+  name: "Authentication Plugin",
+  version: "1.0.0",
+
+  setup: async ({ request }) => {
+    // Get token from storage or auth service
+    const token = await getAuthToken();
+
+    if (!token) {
+      return; // No modifications if no token
+    }
+
+    return {
+      request: {
+        ...request,
+        headers: {
+          ...request.headers,
+          Authorization: `Bearer ${token}`,
+        },
+      },
+    };
+  },
+
+  hooks: {
+    onResponseError: async (ctx) => {
+      // Handle token refresh on 401
+      if (ctx.response.status === 401) {
+        await refreshToken();
+      }
+    },
+  },
+});
+```
+
+### Caching Plugin
+
+```ts
+import { definePlugin } from "@zayne-labs/callapi/utils";
+
+const cachingPlugin = definePlugin({
+  id: "caching",
+  name: "Response Caching Plugin",
+  version: "1.0.0",
+
+  middlewares: (context) => {
+    const cache = new Map<string, Response>();
+
+    return {
+      fetchMiddleware: (ctx) => async (input, init) => {
+        const cacheKey = `${init?.method || "GET"}_${input.toString()}`;
+
+        // Check cache for GET requests
+        if (init?.method === "GET" || !init?.method) {
+          const cached = cache.get(cacheKey);
+          if (cached) {
+            return cached.clone();
+          }
+        }
+
+        // Make request and cache response
+        const response = await ctx.fetchImpl(input, init);
+
+        if (response.ok && (init?.method === "GET" || !init?.method)) {
+          cache.set(cacheKey, response.clone());
+        }
+
+        return response;
+      },
+    };
+  },
+});
+```
+
+### Metrics Plugin
+
+```ts
+import { definePlugin } from "@zayne-labs/callapi/utils";
+
+declare module "@zayne-labs/callapi" {
+  interface Register {
+    meta: {
+      startTime: number;
+    };
+  }
+}
+
+const metricsPlugin = definePlugin({
+  id: "metrics",
+  name: "API Metrics Plugin",
+  version: "1.0.0",
+
+  setup: ({ options }) => {
+    return {
+      options: {
+        ...options,
+        meta: {
+          ...options.meta,
+          startTime: performance.now(),
+        },
+      },
+    };
+  },
+
+  hooks: {
+    onSuccess: ({ options, request }) => {
+      const duration = performance.now() - (options.meta?.startTime ?? 0);
+      console.log(`✓ ${request.method} completed in ${duration.toFixed(2)}ms`);
+    },
+    onError: ({ options, request, error }) => {
+      const duration = performance.now() - (options.meta?.startTime ?? 0);
+      console.error(`✗ ${request.method} failed after ${duration.toFixed(2)}ms:`, error);
+    },
+  },
+});
+```
+
+## Plugin Interface
+
+A CallApi plugin can include:
+
+<Properties>
+  <Property name="id" type="string" required>
+    A unique identifier for the plugin
+  </Property>
+  <Property name="name" type="string" required>
+    A human-readable name for the plugin
+  </Property>
+  <Property name="description" type="string">
+    Optional description of what the plugin does
+  </Property>
+  <Property name="version" type="string">
+    Optional version string for the plugin
+  </Property>
+  <Property name="setup" type="(context) => PluginInitResult | void">
+    Optional setup function that runs before request processing. Can return modified `request`, `options`, or `initURL`.
+  </Property>
+  <Property name="hooks" type="PluginHooks | ((context) => PluginHooks)">
+    Lifecycle hooks for the plugin. Can be an object or a function that returns hooks.
+  </Property>
+  <Property name="middlewares" type="PluginMiddlewares | ((context) => PluginMiddlewares)">
+    Middleware functions to wrap fetch calls. Can be an object or a function that returns middlewares.
+  </Property>
+  <Property name="defineExtraOptions" type="() => Schema">
+    Optional function that returns a validation schema for custom options this plugin accepts.
+  </Property>
+  <Property name="schema" type="BaseCallApiSchemaAndConfig">
+    Optional base schema for the client.
+  </Property>
+</Properties>
+
+## Alternative: Using `satisfies`
+
+You can also use TypeScript's `satisfies` keyword instead of `definePlugin`:
+
+```ts
+import type { CallApiPlugin } from "@zayne-labs/callapi";
+
+const myPlugin = {
+  id: "my-plugin",
+  name: "My Plugin",
+  hooks: {
+    onRequest: (ctx) => {
+      console.log("Request starting");
+    },
+  },
+} satisfies CallApiPlugin;
+```
+
+Both approaches provide the same type safety. Use `definePlugin` for consistency with CallApi's other utilities, or use `satisfies` if you prefer TypeScript's native type checking.
+
+## See Also
+
+- [Plugins Guide](/guides/plugins) - Complete guide to creating and using plugins
+- [Logger Plugin](/plugins/logger) - Built-in logger plugin example
+- [Custom Plugins](/plugins/custom-plugins) - More examples of custom plugins
+- [Hooks](/api/hooks) - Available lifecycle hooks
+- [Middlewares](/api/middlewares) - Working with middleware

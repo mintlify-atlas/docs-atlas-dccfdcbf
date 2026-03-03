@@ -1,0 +1,523 @@
+---
+title: Custom Plugins
+description: Guide to creating custom CallApi plugins with examples
+---
+
+This guide shows you how to create custom CallApi plugins for common use cases. Plugins are a powerful way to extend CallApi with reusable functionality.
+
+## Plugin Structure
+
+A CallApi plugin has this structure:
+
+```ts
+import { definePlugin } from "@zayne-labs/callapi/utils";
+
+const myPlugin = definePlugin({
+  // Required
+  id: "unique-plugin-id",
+  name: "My Plugin",
+  
+  // Optional
+  version: "1.0.0",
+  description: "What this plugin does",
+  
+  // Plugin functionality
+  setup: (context) => { /* ... */ },
+  hooks: { /* ... */ },
+  middlewares: { /* ... */ },
+  defineExtraOptions: () => { /* ... */ },
+});
+```
+
+## Authentication Plugin
+
+A plugin that automatically adds authentication headers:
+
+```ts
+import { definePlugin } from "@zayne-labs/callapi/utils";
+import { z } from "zod";
+
+const authSchema = z.object({
+  skipAuth: z.boolean().optional(),
+});
+
+export const authPlugin = definePlugin({
+  id: "auth",
+  name: "Authentication Plugin",
+  version: "1.0.0",
+  
+  defineExtraOptions: () => authSchema,
+  
+  setup: async (ctx) => {
+    // Skip auth if requested
+    if (ctx.options.skipAuth) {
+      return;
+    }
+    
+    // Get token from storage or auth service
+    const token = await getAuthToken();
+    
+    if (!token) {
+      return; // No token available
+    }
+    
+    return {
+      request: {
+        ...ctx.request,
+        headers: {
+          ...ctx.request.headers,
+          Authorization: `Bearer ${token}`,
+        },
+      },
+    };
+  },
+  
+  hooks: {
+    onResponseError: async (ctx) => {
+      // Auto-refresh token on 401
+      if (ctx.response.status === 401) {
+        await refreshAuthToken();
+      }
+    },
+  },
+});
+
+// Usage
+const api = createFetchClient({
+  baseURL: "https://api.example.com",
+  plugins: [authPlugin],
+});
+
+// With auth
+const { data: users } = await api("/users");
+
+// Skip auth for specific request
+const { data: publicData } = await api("/public", {
+  skipAuth: true,
+});
+```
+
+## Retry Plugin
+
+A plugin that retries failed requests:
+
+```ts
+import { definePlugin } from "@zayne-labs/callapi/utils";
+import { z } from "zod";
+
+const retrySchema = z.object({
+  maxRetries: z.number().int().positive().optional(),
+  retryDelay: z.number().positive().optional(),
+  retryOn: z.array(z.number()).optional(),
+});
+
+export const retryPlugin = (options?: {
+  maxRetries?: number;
+  retryDelay?: number;
+  retryOn?: number[];
+}) => {
+  const config = {
+    maxRetries: options?.maxRetries ?? 3,
+    retryDelay: options?.retryDelay ?? 1000,
+    retryOn: options?.retryOn ?? [408, 429, 500, 502, 503, 504],
+  };
+  
+  return definePlugin({
+    id: "retry",
+    name: "Retry Plugin",
+    version: "1.0.0",
+    
+    defineExtraOptions: () => retrySchema,
+    
+    middlewares: (context) => {
+      return {
+        fetchMiddleware: (ctx) => async (input, init) => {
+          const maxRetries = context.options.maxRetries ?? config.maxRetries;
+          const retryDelay = context.options.retryDelay ?? config.retryDelay;
+          const retryOn = context.options.retryOn ?? config.retryOn;
+          
+          let lastError: Error | undefined;
+          let lastResponse: Response | undefined;
+          
+          for (let attempt = 0; attempt < maxRetries; attempt++) {
+            try {
+              const response = await ctx.fetchImpl(input, init);
+              
+              // Return if successful or status not in retry list
+              if (response.ok || !retryOn.includes(response.status)) {
+                return response;
+              }
+              
+              lastResponse = response;
+              
+              // Wait before retrying
+              if (attempt < maxRetries - 1) {
+                await new Promise((resolve) => 
+                  setTimeout(resolve, retryDelay * (attempt + 1))
+                );
+              }
+            } catch (error) {
+              lastError = error as Error;
+              
+              // Wait before retrying
+              if (attempt < maxRetries - 1) {
+                await new Promise((resolve) => 
+                  setTimeout(resolve, retryDelay * (attempt + 1))
+                );
+              }
+            }
+          }
+          
+          // All retries exhausted
+          if (lastResponse) {
+            return lastResponse;
+          }
+          throw lastError ?? new Error("Max retries reached");
+        },
+      };
+    },
+  });
+};
+
+// Usage
+const api = createFetchClient({
+  plugins: [retryPlugin({ maxRetries: 5, retryDelay: 2000 })],
+});
+
+// Override per request
+const { data } = await api("/users", {
+  maxRetries: 10,
+});
+```
+
+## Caching Plugin
+
+A plugin that caches GET requests:
+
+```ts
+import { definePlugin } from "@zayne-labs/callapi/utils";
+import { z } from "zod";
+
+const cacheSchema = z.object({
+  cache: z.enum(["default", "no-cache", "force-cache"]).optional(),
+  cacheTime: z.number().positive().optional(),
+});
+
+interface CacheEntry {
+  response: Response;
+  timestamp: number;
+}
+
+export const cachePlugin = (options?: {
+  defaultCacheTime?: number;
+}) => {
+  const cache = new Map<string, CacheEntry>();
+  const defaultCacheTime = options?.defaultCacheTime ?? 5 * 60 * 1000; // 5 minutes
+  
+  return definePlugin({
+    id: "cache",
+    name: "Caching Plugin",
+    version: "1.0.0",
+    
+    defineExtraOptions: () => cacheSchema,
+    
+    middlewares: (context) => {
+      return {
+        fetchMiddleware: (ctx) => async (input, init) => {
+          const cacheOption = context.options.cache ?? "default";
+          const cacheTime = context.options.cacheTime ?? defaultCacheTime;
+          
+          // Skip cache for non-GET requests
+          const method = init?.method || "GET";
+          if (method !== "GET") {
+            return ctx.fetchImpl(input, init);
+          }
+          
+          const cacheKey = input.toString();
+          
+          // Force cache bypass
+          if (cacheOption === "no-cache") {
+            cache.delete(cacheKey);
+            return ctx.fetchImpl(input, init);
+          }
+          
+          // Check cache
+          const cached = cache.get(cacheKey);
+          if (cached) {
+            const age = Date.now() - cached.timestamp;
+            
+            // Return cached if not expired or force-cache
+            if (cacheOption === "force-cache" || age < cacheTime) {
+              return cached.response.clone();
+            }
+          }
+          
+          // Make request
+          const response = await ctx.fetchImpl(input, init);
+          
+          // Cache successful responses
+          if (response.ok) {
+            cache.set(cacheKey, {
+              response: response.clone(),
+              timestamp: Date.now(),
+            });
+          }
+          
+          return response;
+        },
+      };
+    },
+  });
+};
+
+// Usage
+const api = createFetchClient({
+  plugins: [cachePlugin({ defaultCacheTime: 10 * 60 * 1000 })],
+});
+
+// Use cache (default)
+const { data: users1 } = await api("/users");
+
+// Use cached response
+const { data: users2 } = await api("/users");
+
+// Skip cache
+const { data: freshUsers } = await api("/users", {
+  cache: "no-cache",
+});
+```
+
+## Rate Limiting Plugin
+
+A plugin that implements client-side rate limiting:
+
+```ts
+import { definePlugin } from "@zayne-labs/callapi/utils";
+
+interface RateLimitConfig {
+  maxRequests: number;
+  perMilliseconds: number;
+}
+
+export const rateLimitPlugin = (config: RateLimitConfig) => {
+  const queue: Array<() => void> = [];
+  const timestamps: number[] = [];
+  
+  const checkRateLimit = async () => {
+    const now = Date.now();
+    const cutoff = now - config.perMilliseconds;
+    
+    // Remove old timestamps
+    while (timestamps.length > 0 && timestamps[0]! < cutoff) {
+      timestamps.shift();
+    }
+    
+    // If under limit, allow immediately
+    if (timestamps.length < config.maxRequests) {
+      timestamps.push(now);
+      return;
+    }
+    
+    // Wait until we can make another request
+    const oldestTimestamp = timestamps[0]!;
+    const waitTime = oldestTimestamp + config.perMilliseconds - now;
+    
+    await new Promise((resolve) => setTimeout(resolve, waitTime));
+    
+    // Try again
+    return checkRateLimit();
+  };
+  
+  return definePlugin({
+    id: "rate-limit",
+    name: "Rate Limiting Plugin",
+    version: "1.0.0",
+    
+    middlewares: {
+      fetchMiddleware: (ctx) => async (input, init) => {
+        // Wait for rate limit
+        await checkRateLimit();
+        
+        // Make request
+        return ctx.fetchImpl(input, init);
+      },
+    },
+  });
+};
+
+// Usage - limit to 10 requests per second
+const api = createFetchClient({
+  plugins: [
+    rateLimitPlugin({
+      maxRequests: 10,
+      perMilliseconds: 1000,
+    }),
+  ],
+});
+```
+
+## Request ID Plugin
+
+A plugin that adds unique request IDs:
+
+```ts
+import { definePlugin } from "@zayne-labs/callapi/utils";
+import { v4 as uuidv4 } from "uuid";
+
+export const requestIdPlugin = definePlugin({
+  id: "request-id",
+  name: "Request ID Plugin",
+  version: "1.0.0",
+  
+  setup: (ctx) => {
+    const requestId = uuidv4();
+    
+    return {
+      request: {
+        ...ctx.request,
+        headers: {
+          ...ctx.request.headers,
+          "X-Request-ID": requestId,
+        },
+      },
+      options: {
+        ...ctx.options,
+        meta: {
+          ...ctx.options.meta,
+          requestId,
+        },
+      },
+    };
+  },
+  
+  hooks: {
+    onRequest: (ctx) => {
+      console.log(`[${ctx.options.meta?.requestId}] → ${ctx.request.method} ${ctx.options.fullURL}`);
+    },
+    onSuccess: (ctx) => {
+      console.log(`[${ctx.options.meta?.requestId}] ✓ Success`);
+    },
+    onError: (ctx) => {
+      console.error(`[${ctx.options.meta?.requestId}] ✗ Error`, ctx.error);
+    },
+  },
+});
+```
+
+## Performance Monitoring Plugin
+
+```ts
+import { definePlugin } from "@zayne-labs/callapi/utils";
+
+interface PerformanceMetrics {
+  url: string;
+  method: string;
+  duration: number;
+  status?: number;
+  success: boolean;
+}
+
+export const performancePlugin = (options?: {
+  onMetric?: (metric: PerformanceMetrics) => void;
+}) => {
+  return definePlugin({
+    id: "performance",
+    name: "Performance Monitoring Plugin",
+    version: "1.0.0",
+    
+    setup: (ctx) => {
+      return {
+        options: {
+          ...ctx.options,
+          meta: {
+            ...ctx.options.meta,
+            startTime: performance.now(),
+          },
+        },
+      };
+    },
+    
+    hooks: {
+      onSuccess: (ctx) => {
+        const duration = performance.now() - (ctx.options.meta?.startTime ?? 0);
+        
+        const metric: PerformanceMetrics = {
+          url: ctx.options.fullURL,
+          method: ctx.request.method,
+          duration,
+          status: ctx.response.status,
+          success: true,
+        };
+        
+        options?.onMetric?.(metric);
+        
+        if (duration > 1000) {
+          console.warn(`Slow request: ${ctx.request.method} ${ctx.options.fullURL} took ${duration.toFixed(2)}ms`);
+        }
+      },
+      
+      onError: (ctx) => {
+        const duration = performance.now() - (ctx.options.meta?.startTime ?? 0);
+        
+        const metric: PerformanceMetrics = {
+          url: ctx.options.fullURL,
+          method: ctx.request.method,
+          duration,
+          success: false,
+        };
+        
+        options?.onMetric?.(metric);
+      },
+    },
+  });
+};
+
+// Usage with custom metrics handler
+const metrics: PerformanceMetrics[] = [];
+
+const api = createFetchClient({
+  plugins: [
+    performancePlugin({
+      onMetric: (metric) => {
+        metrics.push(metric);
+        // Send to analytics service
+        analytics.track("api_request", metric);
+      },
+    }),
+  ],
+});
+```
+
+## Combining Multiple Plugins
+
+```ts
+import { createFetchClient } from "@zayne-labs/callapi";
+import { loggerPlugin } from "@zayne-labs/callapi-plugins";
+import {
+  authPlugin,
+  retryPlugin,
+  cachePlugin,
+  requestIdPlugin,
+  performancePlugin,
+} from "./plugins";
+
+const api = createFetchClient({
+  baseURL: "https://api.example.com",
+  plugins: [
+    requestIdPlugin,
+    authPlugin,
+    retryPlugin({ maxRetries: 3 }),
+    cachePlugin({ defaultCacheTime: 5 * 60 * 1000 }),
+    performancePlugin(),
+    loggerPlugin({ mode: "verbose" }),
+  ],
+});
+```
+
+## See Also
+
+- [definePlugin](/api/utils/define-plugin) - Plugin creation utility
+- [Logger Plugin](/plugins/logger) - Built-in logger plugin
+- [Plugins Guide](/guides/plugins) - Detailed plugin documentation
+- [Hooks](/api/hooks) - Available lifecycle hooks
+- [Middlewares](/api/middlewares) - Working with middleware

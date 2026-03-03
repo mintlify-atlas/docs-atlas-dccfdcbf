@@ -1,0 +1,380 @@
+---
+title: callApi
+description: Make type-safe HTTP requests with automatic error handling and validation
+---
+
+The `callApi` function is the primary method for making HTTP requests. It's a pre-configured instance created from `createFetchClient()` with default settings.
+
+## Function Signature
+
+```typescript
+function callApi<
+  TData = unknown,
+  TErrorData = unknown,
+  TResultMode extends ResultModeType = "simple",
+  TCallApiContext extends CallApiContext = DefaultCallApiContext,
+  TThrowOnError extends boolean = false,
+  TResponseType extends ResponseTypeType = "json",
+  const TSchemaConfig extends CallApiSchemaConfig = {},
+  TInitURL extends string = string,
+>(
+  initURL: TInitURL,
+  initConfig?: CallApiConfig<...>
+): Promise<CallApiResult<TData, TErrorData, TResultMode, TThrowOnError>>
+```
+
+## Parameters
+
+<ParamField path="initURL" type="string" required>
+  The URL endpoint to make the request to. Can be a full URL or a relative path when used with `baseURL`.
+  
+  ```typescript
+  // Full URL
+  await callApi('https://api.example.com/users')
+  
+  // Relative path (requires baseURL in config)
+  await callApi('/users')
+  
+  // With path parameters
+  await callApi('/users/:id', { params: { id: '123' } })
+  ```
+</ParamField>
+
+<ParamField path="initConfig" type="CallApiConfig" default="{}">
+  Configuration object for the request. Includes all standard fetch options plus CallApi-specific features.
+  
+  ### Request Options
+  
+  <ParamField path="initConfig.method" type="'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD' | 'OPTIONS'">
+    HTTP method for the request. Defaults to `'GET'` for most cases.
+  </ParamField>
+  
+  <ParamField path="initConfig.headers" type="HeadersInit">
+    Request headers as an object, Headers instance, or array of tuples.
+  </ParamField>
+  
+  <ParamField path="initConfig.body" type="any">
+    Request body. Automatically serialized based on content-type or `bodySerializer`.
+  </ParamField>
+  
+  <ParamField path="initConfig.signal" type="AbortSignal">
+    AbortSignal for canceling requests.
+  </ParamField>
+  
+  ### CallApi Options
+  
+  <ParamField path="initConfig.baseURL" type="string">
+    Base URL prepended to relative `initURL` paths.
+  </ParamField>
+  
+  <ParamField path="initConfig.params" type="Record<string, string | number>">
+    Path parameters for URL templates (e.g., `/users/:id`).
+  </ParamField>
+  
+  <ParamField path="initConfig.query" type="Record<string, any>">
+    Query parameters appended to the URL.
+  </ParamField>
+  
+  <ParamField path="initConfig.resultMode" type="'simple' | 'result'" default="'simple'">
+    - `'simple'`: Returns `data` directly on success, throws on error
+    - `'result'`: Returns `{ data, error, response }` object
+  </ParamField>
+  
+  <ParamField path="initConfig.throwOnError" type="boolean | function" default="false">
+    Whether to throw errors instead of returning them. Can be a function for conditional throwing.
+  </ParamField>
+  
+  <ParamField path="initConfig.responseType" type="'json' | 'text' | 'blob' | 'arrayBuffer' | 'formData'" default="'json'">
+    Expected response data type.
+  </ParamField>
+  
+  <ParamField path="initConfig.timeout" type="number">
+    Request timeout in milliseconds.
+  </ParamField>
+  
+  <ParamField path="initConfig.retry" type="RetryOptions">
+    Retry configuration for failed requests.
+  </ParamField>
+  
+  <ParamField path="initConfig.dedupe" type="DedupeOptions">
+    Request deduplication strategy (`'cancel'`, `'defer'`, or `'ignore'`).
+  </ParamField>
+  
+  ### Schema Validation
+  
+  <ParamField path="initConfig.schema" type="CallApiSchema">
+    Schema for validating request/response data.
+  </ParamField>
+  
+  <ParamField path="initConfig.schemaConfig" type="CallApiSchemaConfig">
+    Configuration for schema validation behavior.
+  </ParamField>
+  
+  ### Hooks
+  
+  <ParamField path="initConfig.onRequest" type="(context) => void | Promise<void>">
+    Called before request is sent.
+  </ParamField>
+  
+  <ParamField path="initConfig.onRequestReady" type="(context) => void | Promise<void>">
+    Called after request is prepared and validated.
+  </ParamField>
+  
+  <ParamField path="initConfig.onSuccess" type="(context) => void | Promise<void>">
+    Called on successful response (2xx status).
+  </ParamField>
+  
+  <ParamField path="initConfig.onError" type="(context) => void | Promise<void>">
+    Called on any error.
+  </ParamField>
+  
+  <ParamField path="initConfig.onResponseError" type="(context) => void | Promise<void>">
+    Called on HTTP errors (non-2xx status).
+  </ParamField>
+  
+  <ParamField path="initConfig.onRequestError" type="(context) => void | Promise<void>">
+    Called on network/request errors.
+  </ParamField>
+  
+  <ParamField path="initConfig.onValidationError" type="(context) => void | Promise<void>">
+    Called on schema validation errors.
+  </ParamField>
+  
+  <ParamField path="initConfig.onResponse" type="(context) => void | Promise<void>">
+    Called on any response (success or error).
+  </ParamField>
+</ParamField>
+
+## Return Type
+
+<ResponseField name="result" type="Promise<CallApiResult>">
+  The return type depends on the `resultMode` and `throwOnError` configuration:
+  
+  ### Simple Mode (default)
+  
+  ```typescript
+  // With throwOnError: false (default)
+  type Result = TData | null
+  
+  // With throwOnError: true
+  type Result = TData  // throws on error
+  ```
+  
+  ### Result Mode
+  
+  ```typescript
+  // With throwOnError: false (default)
+  type Result = {
+    data: TData | null
+    error: PossibleHTTPError<TErrorData> | PossibleValidationError | PossibleJavaScriptError | null
+    response: Response | null
+  }
+  
+  // With throwOnError: true
+  type Result = {
+    data: TData
+    error: null
+    response: Response
+  }  // throws on error
+  ```
+</ResponseField>
+
+## Usage Examples
+
+### Basic GET Request
+
+```typescript
+import { callApi } from 'callapi'
+
+interface User {
+  id: number
+  name: string
+  email: string
+}
+
+// Simple mode - returns data directly
+const user = await callApi<User>('https://api.example.com/users/1')
+if (user) {
+  console.log(user.name)
+}
+```
+
+### POST Request with Body
+
+```typescript
+interface CreateUserRequest {
+  name: string
+  email: string
+}
+
+interface CreateUserResponse {
+  id: number
+  name: string
+  email: string
+}
+
+const newUser = await callApi<CreateUserResponse>('https://api.example.com/users', {
+  method: 'POST',
+  body: {
+    name: 'John Doe',
+    email: 'john@example.com'
+  }
+})
+```
+
+### Using Result Mode
+
+```typescript
+const { data, error, response } = await callApi<User>(
+  'https://api.example.com/users/1',
+  { resultMode: 'result' }
+)
+
+if (error) {
+  console.error('Request failed:', error.message)
+  return
+}
+
+console.log('User:', data.name)
+console.log('Status:', response.status)
+```
+
+### Path Parameters and Query Strings
+
+```typescript
+interface SearchResult {
+  users: User[]
+  total: number
+}
+
+const results = await callApi<SearchResult>('/users/:id/posts', {
+  baseURL: 'https://api.example.com',
+  params: { id: '123' },
+  query: { 
+    page: 1, 
+    limit: 10,
+    sort: 'created_at' 
+  }
+})
+// Request URL: https://api.example.com/users/123/posts?page=1&limit=10&sort=created_at
+```
+
+### Error Handling with Typed Error Data
+
+```typescript
+interface ErrorResponse {
+  message: string
+  code: string
+  details?: Record<string, string[]>
+}
+
+const { data, error } = await callApi<User, ErrorResponse>(
+  'https://api.example.com/users/1',
+  { resultMode: 'result' }
+)
+
+if (error) {
+  // error.data is typed as ErrorResponse
+  console.error(`Error ${error.data?.code}: ${error.data?.message}`)
+  if (error.data?.details) {
+    console.error('Validation errors:', error.data.details)
+  }
+}
+```
+
+### Using Hooks for Logging
+
+```typescript
+const user = await callApi<User>('https://api.example.com/users/1', {
+  onRequest: ({ request }) => {
+    console.log('Sending request to:', request.url)
+  },
+  onSuccess: ({ data, response }) => {
+    console.log('Request succeeded:', response.status)
+  },
+  onError: ({ error }) => {
+    console.error('Request failed:', error.message)
+  }
+})
+```
+
+### Request Timeout and Retry
+
+```typescript
+const user = await callApi<User>('https://api.example.com/users/1', {
+  timeout: 5000, // 5 seconds
+  retry: {
+    count: 3,
+    delay: 1000, // 1 second between retries
+    statusCodes: [408, 429, 500, 502, 503, 504]
+  }
+})
+```
+
+### Request Deduplication
+
+```typescript
+// Multiple identical requests - only one actual network call is made
+const [user1, user2, user3] = await Promise.all([
+  callApi<User>('https://api.example.com/users/1', {
+    dedupe: { strategy: 'defer' }
+  }),
+  callApi<User>('https://api.example.com/users/1', {
+    dedupe: { strategy: 'defer' }
+  }),
+  callApi<User>('https://api.example.com/users/1', {
+    dedupe: { strategy: 'defer' }
+  })
+])
+// All three return the same data from a single request
+```
+
+### Using AbortSignal
+
+```typescript
+const controller = new AbortController()
+
+const promise = callApi<User>('https://api.example.com/users/1', {
+  signal: controller.signal
+})
+
+// Cancel the request after 2 seconds
+setTimeout(() => controller.abort(), 2000)
+
+try {
+  const user = await promise
+} catch (error) {
+  if (error.name === 'AbortError') {
+    console.log('Request was cancelled')
+  }
+}
+```
+
+## Type Inference
+
+CallApi provides excellent TypeScript type inference:
+
+```typescript
+// Return type is inferred as User | null
+const user = await callApi<User>('https://api.example.com/users/1')
+
+// Return type is inferred as User (throws on error)
+const userStrict = await callApi<User>('https://api.example.com/users/1', {
+  throwOnError: true
+})
+
+// Return type is inferred as { data: User | null, error: ..., response: ... }
+const result = await callApi<User>('https://api.example.com/users/1', {
+  resultMode: 'result'
+})
+
+// Response type is inferred as string
+const html = await callApi<string>('https://example.com', {
+  responseType: 'text'
+})
+```
+
+## Related
+
+- [createFetchClient](/api/create-fetch-client) - Create a custom client with default configuration
+- [createFetchClientWithContext](/api/create-fetch-client-with-context) - Create a client factory with custom context types

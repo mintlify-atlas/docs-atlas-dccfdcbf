@@ -1,0 +1,498 @@
+---
+title: React Query Integration
+description: Use CallApi with TanStack Query (React Query) for powerful data synchronization
+icon: Blocks
+---
+
+This guide covers the essential patterns and best practices for using CallApi within [TanStack Query](https://tanstack.com/query/v5/docs/framework/react) (formerly React Query), allowing you to leverage CallApi's advanced features alongside React Query's caching and synchronization capabilities.
+
+## Quick Start
+
+By default, CallApi returns errors as values in the result object instead of throwing them. However, React Query expects either a resolved promise with data or a rejected promise with an error.
+
+You can configure CallApi to align with that expectation:
+
+```ts title="hooks/useTodos.ts"
+import { useQuery } from "@tanstack/react-query";
+import { callApi } from "@zayne-labs/callapi";
+
+type Todo = {
+	completed: boolean;
+	id: number;
+	title: string;
+};
+
+export const useTodos = () => {
+	return useQuery({
+		queryKey: ["todos"],
+		queryFn: () => {
+			return callApi<Todo[], false>("/todos", {
+				throwOnError: true,
+				resultMode: "onlyData",
+			});
+		},
+	});
+};
+```
+
+## Configuration Options
+
+The key options for React Query integration include:
+
+- **`throwOnError: true`** - Makes CallApi throw errors instead of returning them in the result object
+- **`resultMode: "onlyData"`** - Returns just the data property with its exact type, perfect for React Query
+
+<Callout type="info">
+	These settings ensure CallApi behaves exactly like React Query expects: throwing errors for failures and
+	returning clean data for successes.
+</Callout>
+
+## Centralized Configuration
+
+Create a dedicated client for all your React Query requests:
+
+```ts title="lib/api-client.ts"
+import { createFetchClient } from "@zayne-labs/callapi";
+
+export const queryClient = createFetchClient({
+	baseURL: "https://api.example.com",
+	// Default to React Query compatible settings
+	throwOnError: true,
+	resultMode: "onlyData",
+	// Add common headers
+	headers: {
+		"Content-Type": "application/json",
+	},
+	// Configure retries
+	retryAttempts: 2,
+	retryStrategy: "exponential",
+});
+```
+
+```ts title="hooks/useTodos.ts"
+import { useQuery } from "@tanstack/react-query";
+import { queryClient } from "@/lib/api-client";
+
+type Todo = {
+	completed: boolean;
+	id: number;
+	title: string;
+};
+
+export const useTodos = () => {
+	return useQuery({
+		queryKey: ["todos"],
+		queryFn: () => queryClient<Todo[]>("/todos"),
+	});
+};
+```
+
+## Type Safety with Schema Validation
+
+### Using Zod (Recommended)
+
+Combine runtime validation with automatic type inference:
+
+```ts title="hooks/useTodos.ts"
+import { useQuery } from "@tanstack/react-query";
+import { queryClient } from "@/lib/api-client";
+import { z } from "zod";
+
+const todoSchema = z.object({
+	id: z.number(),
+	title: z.string(),
+	completed: z.boolean(),
+});
+
+const todosSchema = z.array(todoSchema);
+
+export const useTodos = () => {
+	return useQuery({
+		queryKey: ["todos"],
+		queryFn: () => {
+			return queryClient("/todos", {
+				schema: { data: todosSchema },
+			});
+		},
+	});
+};
+```
+
+### Manual Type Specification
+
+For cases where you don't need runtime validation:
+
+```ts title="hooks/useTodos.ts"
+import { useQuery } from "@tanstack/react-query";
+import { queryClient } from "@/lib/api-client";
+
+type Todo = {
+	completed: boolean;
+	id: number;
+	title: string;
+};
+
+export const useTodos = () => {
+	return useQuery({
+		queryKey: ["todos"],
+		queryFn: () => {
+			// Pass `false` as second generic to signal errors will be thrown
+			// This allows callApi to return the expected type
+			return queryClient<Todo[], false>("@get/todos");
+		},
+	});
+};
+```
+
+## Mutations
+
+For creating, updating, or deleting data:
+
+```ts title="hooks/useTodoMutations.ts"
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { queryClient as apiClient } from "@/lib/api-client";
+
+type Todo = {
+	completed: boolean;
+	id: number;
+	title: string;
+};
+
+type CreateTodoInput = {
+	title: string;
+	completed: boolean;
+};
+
+export const useCreateTodo = () => {
+	const queryClient = useQueryClient();
+
+	return useMutation({
+		mutationFn: (input: CreateTodoInput) => {
+			return apiClient<Todo, false>("@post/todos", {
+				body: input,
+			});
+		},
+		onSuccess: () => {
+			// Invalidate and refetch todos
+			queryClient.invalidateQueries({ queryKey: ["todos"] });
+		},
+	});
+};
+
+export const useUpdateTodo = () => {
+	const queryClient = useQueryClient();
+
+	return useMutation({
+		mutationFn: ({ id, ...updates }: Partial<Todo> & { id: number }) => {
+			return apiClient<Todo, false>(`@put/todos/${id}`, {
+				body: updates,
+			});
+		},
+		onSuccess: (data) => {
+			// Update the specific todo in the cache
+			queryClient.setQueryData(["todos", data.id], data);
+			// Invalidate the list
+			queryClient.invalidateQueries({ queryKey: ["todos"] });
+		},
+	});
+};
+
+export const useDeleteTodo = () => {
+	const queryClient = useQueryClient();
+
+	return useMutation({
+		mutationFn: (id: number) => {
+			return apiClient<void, false>(`@delete/todos/${id}`);
+		},
+		onSuccess: (_, id) => {
+			// Remove from cache
+			queryClient.removeQueries({ queryKey: ["todos", id] });
+			// Invalidate the list
+			queryClient.invalidateQueries({ queryKey: ["todos"] });
+		},
+	});
+};
+```
+
+## Advanced Patterns
+
+### Dynamic Query Keys
+
+Use CallApi's URL helpers with query keys:
+
+```ts title="hooks/useTodo.ts"
+import { useQuery } from "@tanstack/react-query";
+import { queryClient } from "@/lib/api-client";
+
+type Todo = {
+	completed: boolean;
+	id: number;
+	title: string;
+};
+
+export const useTodo = (id: number) => {
+	return useQuery({
+		queryKey: ["todos", id],
+		queryFn: () => {
+			return queryClient<Todo, false>("/todos/:id", {
+				params: { id },
+			});
+		},
+		enabled: id > 0, // Only run if id is valid
+	});
+};
+```
+
+### Parallel Queries
+
+Leverage CallApi's request deduplication with parallel queries:
+
+```ts title="hooks/useUserData.ts"
+import { useQueries } from "@tanstack/react-query";
+import { queryClient } from "@/lib/api-client";
+
+type User = { id: number; name: string };
+type Post = { id: number; title: string; userId: number };
+type Comment = { id: number; body: string; postId: number };
+
+export const useUserData = (userId: number) => {
+	return useQueries({
+		queries: [
+			{
+				queryKey: ["user", userId],
+				queryFn: () => queryClient<User, false>(`/users/:id`, { params: { id: userId } }),
+			},
+			{
+				queryKey: ["posts", userId],
+				queryFn: () => queryClient<Post[], false>("/posts", { query: { userId } }),
+			},
+			{
+				queryKey: ["comments", userId],
+				queryFn: () => queryClient<Comment[], false>("/comments", { query: { userId } }),
+			},
+		],
+	});
+};
+```
+
+### Optimistic Updates
+
+Combine with CallApi's hooks for optimistic UI updates:
+
+```ts title="hooks/useToggleTodo.ts"
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { queryClient as apiClient } from "@/lib/api-client";
+
+type Todo = {
+	completed: boolean;
+	id: number;
+	title: string;
+};
+
+export const useToggleTodo = () => {
+	const queryClient = useQueryClient();
+
+	return useMutation({
+		mutationFn: async (todo: Todo) => {
+			return apiClient<Todo, false>(`@patch/todos/${todo.id}`, {
+				body: { completed: !todo.completed },
+			});
+		},
+		onMutate: async (todo) => {
+			// Cancel outgoing refetches
+			await queryClient.cancelQueries({ queryKey: ["todos"] });
+
+			// Snapshot previous value
+			const previousTodos = queryClient.getQueryData<Todo[]>(["todos"]);
+
+			// Optimistically update
+			if (previousTodos) {
+				queryClient.setQueryData<Todo[]>(
+					["todos"],
+					previousTodos.map((t) => (t.id === todo.id ? { ...t, completed: !t.completed } : t))
+				);
+			}
+
+			return { previousTodos };
+		},
+		onError: (err, todo, context) => {
+			// Rollback on error
+			if (context?.previousTodos) {
+				queryClient.setQueryData(["todos"], context.previousTodos);
+			}
+		},
+		onSettled: () => {
+			// Always refetch after error or success
+			queryClient.invalidateQueries({ queryKey: ["todos"] });
+		},
+	});
+};
+```
+
+### Using CallApi Hooks with React Query
+
+You can use CallApi's lifecycle hooks even with `throwOnError`:
+
+```ts title="hooks/useUsers.ts"
+import { useQuery } from "@tanstack/react-query";
+import { queryClient } from "@/lib/api-client";
+
+type User = { id: number; name: string; email: string };
+
+export const useUsers = () => {
+	return useQuery({
+		queryKey: ["users"],
+		queryFn: () => {
+			return queryClient<User[], false>("/users", {
+				// CallApi hooks still work!
+				onRequest: ({ request }) => {
+					console.log("Fetching users...");
+				},
+				onSuccess: ({ data }) => {
+					console.log(`Loaded ${data.length} users`);
+				},
+				// Note: onError won't be called since errors are thrown
+				// Use React Query's onError instead
+			});
+		},
+		onError: (error) => {
+			console.error("Failed to load users:", error);
+		},
+	});
+};
+```
+
+## Best Practices
+
+### 1. Separate Concerns
+
+Keep API logic separate from React Query configuration:
+
+```ts title="api/todos.ts"
+import { queryClient } from "@/lib/api-client";
+import { z } from "zod";
+
+const todoSchema = z.object({
+	id: z.number(),
+	title: z.string(),
+	completed: z.boolean(),
+});
+
+export const todosApi = {
+	getAll: () => queryClient("/todos", { schema: { data: z.array(todoSchema) } }),
+	getById: (id: number) => queryClient("/todos/:id", { params: { id }, schema: { data: todoSchema } }),
+	create: (data: { title: string; completed: boolean }) =>
+		queryClient("@post/todos", { body: data, schema: { data: todoSchema } }),
+	update: (id: number, data: Partial<{ title: string; completed: boolean }>) =>
+		queryClient("@patch/todos/:id", { params: { id }, body: data, schema: { data: todoSchema } }),
+	delete: (id: number) => queryClient("@delete/todos/:id", { params: { id } }),
+};
+```
+
+```ts title="hooks/useTodos.ts"
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { todosApi } from "@/api/todos";
+
+export const useTodos = () => {
+	return useQuery({
+		queryKey: ["todos"],
+		queryFn: todosApi.getAll,
+	});
+};
+
+export const useCreateTodo = () => {
+	const queryClient = useQueryClient();
+
+	return useMutation({
+		mutationFn: todosApi.create,
+		onSuccess: () => queryClient.invalidateQueries({ queryKey: ["todos"] }),
+	});
+};
+```
+
+### 2. Handle Loading States
+
+CallApi's streaming support can provide progress updates:
+
+```ts title="hooks/useFileUpload.ts"
+import { useState } from "react";
+import { useMutation } from "@tanstack/react-query";
+import { queryClient } from "@/lib/api-client";
+
+export const useFileUpload = () => {
+	const [progress, setProgress] = useState(0);
+
+	return {
+		progress,
+		upload: useMutation({
+			mutationFn: (file: File) => {
+				const formData = new FormData();
+				formData.append("file", file);
+
+				return queryClient<{ url: string }, false>("@post/upload", {
+					body: formData,
+					onResponseStream: ({ event }) => {
+						if (event.type === "progress") {
+							setProgress(event.progress);
+						}
+					},
+				});
+			},
+			onSuccess: () => setProgress(0),
+		}),
+	};
+};
+```
+
+### 3. Error Handling
+
+Use CallApi's structured errors with React Query:
+
+```tsx title="components/TodoList.tsx"
+import { useTodos } from "@/hooks/useTodos";
+import { isHTTPErrorInstance } from "@zayne-labs/callapi/utils";
+
+export function TodoList() {
+	const { data, error, isLoading } = useTodos();
+
+	if (isLoading) return <div>Loading...</div>;
+
+	if (error) {
+		if (isHTTPErrorInstance(error)) {
+			return <div>HTTP Error: {error.message}</div>;
+		}
+		return <div>Error: {String(error)}</div>;
+	}
+
+	return (
+		<ul>
+			{data?.map((todo) => (
+				<li key={todo.id}>{todo.title}</li>
+			))}
+		</ul>
+	);
+}
+```
+
+## Why Use CallApi with React Query?
+
+Combining CallApi with React Query gives you the best of both worlds:
+
+**From CallApi:**
+- Request deduplication at the network level
+- Automatic retries with exponential backoff
+- Schema validation and type inference
+- Structured error handling
+- URL helpers and parameter substitution
+- Streaming support with progress tracking
+- Plugin system for extensibility
+
+**From React Query:**
+- Automatic background refetching
+- Cache management
+- Optimistic updates
+- Infinite queries
+- Query invalidation and refetching
+- DevTools for debugging
+
+Together, they provide a robust, type-safe, and developer-friendly solution for data fetching in React applications.
